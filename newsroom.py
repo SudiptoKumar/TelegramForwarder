@@ -224,7 +224,7 @@ def rich_html(post, category):
             for p in remainder.split("\n")
             if p.strip()
         ]
-        chunks.append("<p>" + "<br>".join(paragraphs) + "</p>")
+        chunks.append("<br>".join(paragraphs))
 
     if urls:
         chunks.append(f'<a href="{html.escape(urls[0], quote=True)}">Source</a>')

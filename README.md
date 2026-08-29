@@ -45,3 +45,17 @@ For a media test, create a new photo-with-caption post and run again.
 
 This is a republisher, not a native Telegram forward, so there is no
 "Forwarded from" header.
+
+
+## v2 hotfix
+
+The previous GitHub run failed because the generated HTML contained `<p>` tags.
+Telegram Bot API HTML parse mode rejected them with:
+
+`can't parse entities: Unsupported start tag "p"`
+
+v2 removes `<p>` and `</p>` completely. Line breaks are represented with
+plain newlines/`<br>` only, while `<b>` and `<a>` remain supported formatting.
+
+Use a NEW source post for the live test because the previous workflow already
+advanced its update offset.
