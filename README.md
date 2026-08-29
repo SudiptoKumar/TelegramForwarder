@@ -1,53 +1,39 @@
-# Telegram Channel Forwarder v3
+# Telegram Channel Publisher v4
 
-## Root cause from the supplied GitHub log
+This version does not use `forwardMessage` or `copyMessage`.
 
-The bot authenticated, the webhook check passed, the destination channel was found, and all four source channels were found.
+It takes the actual `channel_post` data contained in Telegram's update and
+publishes the content directly to `@NewsroomHQ` using the appropriate
+`send*` Bot API method.
 
-But every pending post failed with:
+Source channels:
+- @BusinessNewsroom
+- @GamingNewsroom
+- @TheTechNewsroom
+- @EntertainmentNewsroom
 
-`400 Bad Request: message to forward not found`
+Destination:
+- @NewsroomHQ
 
-The workflow itself completed because v2 deliberately skipped these failures. It therefore forwarded **0** messages.
+The scheduled workflow runs hourly:
+`0 * * * *`
 
-This does not indicate a GitHub problem. Telegram is accepting the update, but its `forwardMessage` operation cannot retrieve/forward the referenced message.
+Setup:
+1. Put the files in a GitHub repository.
+2. Add repository Actions secret `BOT_TOKEN`.
+3. Ensure the bot is an administrator in all source channels and can post in
+   @NewsroomHQ.
+4. Keep Telegram webhook URL empty.
+5. Run the workflow manually.
+6. Create a NEW post after the run starts/finishes and run the workflow again.
+7. Verify `DIRECT PUBLISH PASS` and the post in @NewsroomHQ.
 
-## What v3 changes
+This is a re-publisher, not a Telegram-native forward. The destination will
+contain a newly published message rather than Telegram's "Forwarded from"
+header.
 
-For each source `channel_post`:
+Supported common post types:
+text, photo, video, animation, document, audio, voice, video note, sticker,
+contact, location, venue.
 
-1. Try the genuine Telegram `forwardMessage`.
-2. If Telegram returns the specific "message to forward not found"/invalid-message error, try `copyMessage`.
-3. If both fail, record the update in `skipped.json` and continue.
-4. Save the Telegram update offset so one bad update cannot block newer posts.
-
-The fallback copy delivers the content to `@NewsroomHQ`, but it does not carry Telegram's forwarded-from header. A successful `forwardMessage` remains the preferred path.
-
-## Setup
-
-Add repository secret:
-
-`BOT_TOKEN = <BotFather token>`
-
-Bot should be administrator in all five channels and must be allowed to post in `@NewsroomHQ`.
-
-Keep webhook URL empty.
-
-## Live test
-
-After uploading:
-
-1. Run the workflow manually.
-2. Create a **new** post in one source channel after the workflow has finished.
-3. Run workflow again.
-4. Look for:
-   - `FORWARD PASS`, or
-   - `COPY FALLBACK PASS`
-5. Verify the message appears in `@NewsroomHQ`.
-6. Run once more without a new post. It should report no new channel posts.
-
-## Important
-
-The previous run consumed the pending updates and recorded them as skipped. Therefore, testing requires a genuinely new post.
-
-Protected Telegram content cannot be forwarded, and Telegram's Bot API documents that `forwardMessage` cannot forward protected content.
+Poll/dice and other unsupported types are recorded in `skipped.json`.
