@@ -1,4 +1,4 @@
-name: Telegram Channel Forwarder
+name: Telegram Channel Publisher
 
 on:
   schedule:
@@ -6,12 +6,13 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: telegram-forwarder
+  group: telegram-channel-publisher
   cancel-in-progress: false
 
 jobs:
-  forward:
+  publish:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
@@ -37,7 +38,8 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: python forward.py
 
-      - name: Save state
+      - name: Save state and skipped updates
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -45,6 +47,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No state changes to commit."
           else
-            git commit -m "Update Telegram forwarding state"
+            git commit -m "Update Telegram publisher state"
             git push
           fi
