@@ -1,140 +1,109 @@
-# Telegram Channel Forwarder
+# Telegram Channel Forwarder (Fixed)
 
-Forwards new posts from four Telegram source channels to `@NewsroomHQ` using a scheduled GitHub Actions workflow.
+Forwards new Telegram channel posts to `@NewsroomHQ` every hour.
 
-## Source channels
+## Channels
 
+Sources:
 - `@BusinessNewsroom`
 - `@GamingNewsroom`
 - `@TheTechNewsroom`
 - `@EntertainmentNewsroom`
 
-## Destination
-
+Destination:
 - `@NewsroomHQ`
 
-## How it works
+## Fix for the failed workflow
 
-Every hour, GitHub Actions:
-
-1. Calls Telegram `getUpdates`.
-2. Reads new `channel_post` updates.
-3. Checks whether the post came from one of the four configured source channels.
-4. Forwards matching posts to `@NewsroomHQ`.
-5. Saves the Telegram `update_id` in `state.json`.
-6. Commits the updated state back to the repository.
-
-## Setup
-
-### 1. Add the bot to all channels
-
-The same bot must be an administrator in:
-
-- all four source channels
-- `@NewsroomHQ`
-
-Give the bot permission to post in the main channel.
-
-### 2. Make sure the bot is not using a webhook
-
-The `getUpdates` method cannot be used while an outgoing webhook is configured.
-
-Check:
+The supplied GitHub log showed:
 
 ```text
-https://api.telegram.org/botYOUR_BOT_TOKEN/getWebhookInfo
+BOT_TOKEN:
+ERROR: 404 Client Error: Not Found for url:
+https://api.telegram.org/bot/getUpdates...
 ```
 
-The returned `url` should be empty.
+The `BOT_TOKEN` environment variable was empty. GitHub therefore constructed an invalid Telegram URL.
 
-If you previously configured a webhook and no longer need it, remove it with:
+This version adds an explicit configuration test before forwarding.
+
+## GitHub setup
+
+Create:
 
 ```text
-https://api.telegram.org/botYOUR_BOT_TOKEN/deleteWebhook
+Repository -> Settings -> Secrets and variables -> Actions
 ```
 
-### 3. Add the bot token to GitHub
-
-Open:
-
-`Repository → Settings → Secrets and variables → Actions`
-
-Create a repository secret:
+Add a **Repository secret**:
 
 ```text
 Name: BOT_TOKEN
-Value: YOUR_TELEGRAM_BOT_TOKEN
+Value: <your real BotFather token>
 ```
 
-Never commit the bot token to the repository.
+Do not include `bot` or any extra spaces in the secret value.
 
-### 4. Upload these files
+The workflow automatically checks:
 
-Push the repository contents to GitHub.
+1. `BOT_TOKEN` exists.
+2. The token works with Telegram `getMe`.
+3. No webhook is configured.
+4. `@NewsroomHQ` can be resolved with `getChat`.
 
-The workflow is:
+## Telegram permissions
+
+The bot should be an administrator in all five channels.
+
+It needs permission to post in:
 
 ```text
-.github/workflows/forward.yml
-forward.py
-state.json
-requirements.txt
-.gitignore
-README.md
+@NewsroomHQ
 ```
 
-### 5. Test manually
+## Important: update delivery
 
-Go to:
+This workflow uses Telegram `getUpdates`, not a webhook.
 
-`Repository → Actions → Telegram Channel Forwarder → Run workflow`
+Do not configure a webhook for this bot while using this workflow.
 
-Before testing, create a new post in one of the four source channels.
+Check manually:
 
-The workflow should forward it to `@NewsroomHQ`.
+```text
+https://api.telegram.org/botYOUR_TOKEN/getWebhookInfo
+```
 
-## Important behavior
+The `url` must be empty.
 
-The workflow runs hourly:
+## Test procedure
+
+1. Add `BOT_TOKEN` as a GitHub Actions repository secret.
+2. Push this repository.
+3. Open:
+   `Actions -> Telegram Channel Forwarder`
+4. Click:
+   `Run workflow`
+5. The `Validate Telegram bot configuration` step should pass.
+6. Create a new post in one source channel.
+7. Run the workflow manually.
+8. Confirm the post appears in `@NewsroomHQ`.
+9. Run the workflow again without creating another post. It should report:
+   `No new channel posts.`
+
+The scheduled workflow runs at:
 
 ```text
 0 * * * *
 ```
 
-GitHub Actions scheduled workflows are not guaranteed to start at exactly the scheduled second, so treat the hourly schedule as approximate.
+which means once every hour.
 
-Telegram keeps pending updates for a limited period. If the workflow is disabled for too long, old updates may no longer be available.
+## State file
 
-If a forwarding operation fails, the script exits without advancing the saved offset. This prevents a failed update from being silently marked as processed. A retry can therefore result in a duplicate only if Telegram accepted the forwarding but the workflow failed before saving state.
+`state.json` stores the Telegram `update_id` offset.
 
-## Protected content
+The workflow commits the updated state back to the repository after a successful run.
 
-Telegram messages with protected content may not be forwardable. Such posts can fail when `forwardMessage` is used.
+## Security
 
-## Changing the schedule
-
-Current schedule:
-
-```yaml
-- cron: "0 * * * *"
-```
-
-Examples:
-
-Every 30 minutes:
-
-```yaml
-- cron: "*/30 * * * *"
-```
-
-Every 2 hours:
-
-```yaml
-- cron: "0 */2 * * *"
-```
-
-Daily at 09:00 UTC:
-
-```yaml
-- cron: "0 9 * * *"
-```
+Never commit the bot token into the repository or expose it in logs.
