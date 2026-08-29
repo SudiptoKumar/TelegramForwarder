@@ -32,12 +32,12 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: python forward.py --check
 
-      - name: Process new Telegram posts
+      - name: Publish new channel posts
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: python forward.py
 
-      - name: Save forwarding state
+      - name: Save state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
