@@ -1,61 +1,19 @@
-# NewsroomHQ Rich News Aggregator v1
+# Telegram Native Forwarder v6
 
-Sources:
-- @BusinessNewsroom
-- @GamingNewsroom
-- @TheTechNewsroom
-- @EntertainmentNewsroom
+Forwards new posts from the four source channels to `@NewsroomHQ`.
 
-Destination:
-- @NewsroomHQ
+Primary operation: Telegram `forwardMessage`.
 
-This version does not use Telegram `forwardMessage` or `copyMessage`.
-It reads the content already present in each `channel_post` update and
-publishes a new formatted post using standard Bot API `sendMessage`,
-`sendPhoto`, `sendVideo`, etc.
+Fallback: Telegram `copyMessage`.
 
-The rich formatting is built by Python from the incoming source post.
-This is intentionally separate from the AI/rich-message implementation in
-ScienceNewsroomBot. That implementation can be integrated later if its
-custom `sendRichMessage` capability is confirmed for this bot.
+The script uses the exact numeric `chat.id` from each incoming `channel_post`
+and the incoming `message_id`. It does not rebuild content.
 
-State is checkpointed after every successfully delivered or deliberately
-skipped update. A transient/unexpected error does not advance the offset,
-so that update can be retried on the next run.
+State is advanced only after a post is successfully forwarded, successfully
+copied, or deliberately skipped. Network errors, rate limits and Telegram 5xx
+errors leave the offset unchanged so the post is retried.
 
-The workflow state-saving step uses `if: always()`.
+The GitHub state-save step uses `if: always()`.
 
-## Setup
-
-Add a GitHub Actions repository secret:
-
-BOT_TOKEN=<BotFather token>
-
-The bot must be an administrator in all four source channels and be able to
-post in @NewsroomHQ.
-
-Keep the Telegram webhook URL empty.
-
-## Testing
-
-Run the workflow manually. Then create a NEW text post in a source channel
-and run the workflow again. Confirm `PUBLISH PASS` and check @NewsroomHQ.
-
-For a media test, create a new photo-with-caption post and run again.
-
-This is a republisher, not a native Telegram forward, so there is no
-"Forwarded from" header.
-
-
-## v2 hotfix
-
-The previous GitHub run failed because the generated HTML contained `<p>` tags.
-Telegram Bot API HTML parse mode rejected them with:
-
-`can't parse entities: Unsupported start tag "p"`
-
-v2 removes `<p>` and `</p>` completely. Line breaks are represented with
-plain newlines/`<br>` only, while `<b>` and `<a>` remain supported formatting.
-
-Use a NEW source post for the live test because the previous workflow already
-advanced its update offset.
+A live Telegram delivery test requires the private BOT_TOKEN in GitHub Actions.
+This package was locally tested with mocked Telegram API responses.
