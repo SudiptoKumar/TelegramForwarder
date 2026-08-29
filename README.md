@@ -1,39 +1,71 @@
-# Telegram Channel Publisher v4
+# Telegram Channel Publisher v5
 
-This version does not use `forwardMessage` or `copyMessage`.
+This version fixes the state-management problem and avoids the `forwardMessage`
+and `copyMessage` operations that were failing in the previous runs.
 
-It takes the actual `channel_post` data contained in Telegram's update and
-publishes the content directly to `@NewsroomHQ` using the appropriate
-`send*` Bot API method.
+## Sources
 
-Source channels:
 - @BusinessNewsroom
 - @GamingNewsroom
 - @TheTechNewsroom
 - @EntertainmentNewsroom
 
-Destination:
+## Destination
+
 - @NewsroomHQ
 
-The scheduled workflow runs hourly:
-`0 * * * *`
+## How it works
 
-Setup:
-1. Put the files in a GitHub repository.
-2. Add repository Actions secret `BOT_TOKEN`.
-3. Ensure the bot is an administrator in all source channels and can post in
-   @NewsroomHQ.
-4. Keep Telegram webhook URL empty.
+GitHub Actions runs hourly. Telegram `getUpdates` supplies `channel_post`
+objects. The publisher reads the content already present in each update and
+uses the corresponding `send*` Bot API method.
+
+It does not call `forwardMessage` or `copyMessage`.
+
+## Safe state handling
+
+The offset is saved immediately after each successful or deliberately skipped
+update.
+
+A transient or unexpected error does NOT advance the offset. That update will
+be retried on the next workflow run.
+
+The workflow's final state step uses `if: always()` so state files are committed
+even when the processing step exits non-zero. This is useful for deliberately
+skipped permanent errors, while transient errors remain retryable.
+
+## Setup
+
+Add the repository Actions secret:
+
+```text
+BOT_TOKEN=<your BotFather token>
+```
+
+The bot must be an administrator in all four source channels and have permission
+to post in @NewsroomHQ.
+
+Keep Telegram webhook URL empty because this workflow uses getUpdates.
+
+## Test
+
+1. Upload the files.
+2. Run the workflow manually.
+3. Confirm configuration checks pass.
+4. Create a NEW text post in one source channel.
 5. Run the workflow manually.
-6. Create a NEW post after the run starts/finishes and run the workflow again.
-7. Verify `DIRECT PUBLISH PASS` and the post in @NewsroomHQ.
+6. Confirm the log contains `DIRECT PUBLISH PASS`.
+7. Confirm the message appears in @NewsroomHQ.
+8. Test a photo and video as well.
 
-This is a re-publisher, not a Telegram-native forward. The destination will
-contain a newly published message rather than Telegram's "Forwarded from"
-header.
+This creates a new message in @NewsroomHQ. It is not a Telegram-native forwarded
+message with a "Forwarded from" header.
 
-Supported common post types:
-text, photo, video, animation, document, audio, voice, video note, sticker,
-contact, location, venue.
+## Important limitation
 
-Poll/dice and other unsupported types are recorded in `skipped.json`.
+Media albums are received as individual channel posts by this implementation,
+so an album may be republished as separate media messages. Unsupported Telegram
+post types are recorded in skipped.json instead of silently disappearing.
+
+A real Telegram delivery test must be performed in the user's Telegram/GitHub
+environment because this package does not have access to the user's bot token.
