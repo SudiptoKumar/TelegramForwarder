@@ -1,75 +1,53 @@
-# Telegram Channel Forwarder v2
+# Telegram Channel Forwarder v3
 
-## Root cause found in the supplied GitHub log
+## Root cause from the supplied GitHub log
 
-The workflow authenticated successfully:
+The bot authenticated, the webhook check passed, the destination channel was found, and all four source channels were found.
 
-- `@BNewsroombot`
-- webhook check passed
-- `@NewsroomHQ` destination check passed
+But every pending post failed with:
 
-It then failed on:
+`400 Bad Request: message to forward not found`
 
-```text
-Forwarding @TheTechNewsroom message 12 -> @NewsroomHQ
-ERROR: 400
-Bad Request: message to forward not found
-```
+The workflow itself completed because v2 deliberately skipped these failures. It therefore forwarded **0** messages.
 
-Because the old script stopped on this error, it never advanced the Telegram `update_id` offset. The same bad/unforwardable update can therefore block later messages on every run.
+This does not indicate a GitHub problem. Telegram is accepting the update, but its `forwardMessage` operation cannot retrieve/forward the referenced message.
 
-## What this version fixes
+## What v3 changes
 
-- Validates the bot token and webhook before processing.
-- Checks all four source channels.
-- Processes updates one by one.
-- Retries a transient forwarding error once.
-- Records permanently unforwardable messages in `skipped.json`.
-- Advances the offset after handled/skipped updates, so one bad Telegram post cannot block newer posts.
-- Keeps a GitHub Actions `concurrency` lock so two runs do not race over `state.json`.
-- Runs hourly with `0 * * * *`.
+For each source `channel_post`:
 
-## Critical Telegram limitation
+1. Try the genuine Telegram `forwardMessage`.
+2. If Telegram returns the specific "message to forward not found"/invalid-message error, try `copyMessage`.
+3. If both fail, record the update in `skipped.json` and continue.
+4. Save the Telegram update offset so one bad update cannot block newer posts.
 
-Telegram's Bot API does not allow `forwardMessage` for protected content. If a source channel has content protection enabled, the bot can receive the update but Telegram can still refuse the forward. The API also documents `has_protected_content` on chats/messages for this purpose.
-
-Therefore, if `@TheTechNewsroom` is protected, the correct fix is to disable content protection in that source channel if you control it. Otherwise Telegram will not permit a genuine forward.
+The fallback copy delivers the content to `@NewsroomHQ`, but it does not carry Telegram's forwarded-from header. A successful `forwardMessage` remains the preferred path.
 
 ## Setup
 
-Add the repository secret:
+Add repository secret:
 
-```text
-BOT_TOKEN = <real BotFather token>
-```
+`BOT_TOKEN = <BotFather token>`
 
-The bot must be an administrator in:
+Bot should be administrator in all five channels and must be allowed to post in `@NewsroomHQ`.
 
-```text
-@BusinessNewsroom
-@GamingNewsroom
-@TheTechNewsroom
-@EntertainmentNewsroom
-@NewsroomHQ
-```
+Keep webhook URL empty.
 
-The bot needs permission to post in `@NewsroomHQ`.
+## Live test
 
-Keep the webhook URL empty:
+After uploading:
 
-```text
-https://api.telegram.org/botYOUR_TOKEN/getWebhookInfo
-```
+1. Run the workflow manually.
+2. Create a **new** post in one source channel after the workflow has finished.
+3. Run workflow again.
+4. Look for:
+   - `FORWARD PASS`, or
+   - `COPY FALLBACK PASS`
+5. Verify the message appears in `@NewsroomHQ`.
+6. Run once more without a new post. It should report no new channel posts.
 
-## Test
+## Important
 
-1. Push the files.
-2. Run `Actions -> Telegram Channel Forwarder -> Run workflow`.
-3. Confirm `Validate Telegram configuration` passes.
-4. Create a NEW post in a source channel.
-5. Run the workflow manually.
-6. Confirm the log contains `Forwarding ...` and `PASS`.
-7. Confirm the message appears in `@NewsroomHQ`.
-8. Run again with no new post. It should say `No new channel posts.`
+The previous run consumed the pending updates and recorded them as skipped. Therefore, testing requires a genuinely new post.
 
-Do not commit the BotFather token.
+Protected Telegram content cannot be forwarded, and Telegram's Bot API documents that `forwardMessage` cannot forward protected content.

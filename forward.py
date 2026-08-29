@@ -14,7 +14,6 @@ SOURCE_CHANNELS = {
     "@TheTechNewsroom",
     "@EntertainmentNewsroom",
 }
-
 DESTINATION_CHANNEL = "@NewsroomHQ"
 
 STATE_FILE = Path("state.json")
@@ -51,10 +50,6 @@ def save_state(offset: int) -> None:
     )
 
 
-def load_skipped():
-    return load_json(SKIPPED_FILE, {})
-
-
 def save_skipped(data) -> None:
     SKIPPED_FILE.write_text(
         json.dumps(data, indent=2, sort_keys=True) + "\n",
@@ -62,102 +57,64 @@ def save_skipped(data) -> None:
     )
 
 
-def telegram_request(method: str, http_method: str = "GET", **params):
+def tg(method: str, http_method: str = "GET", **params):
     if not BOT_TOKEN:
-        fail(
-            "BOT_TOKEN is empty. Add a GitHub Actions repository secret "
-            "named BOT_TOKEN."
-        )
+        fail("BOT_TOKEN is empty.")
 
     try:
         if http_method == "POST":
-            response = requests.post(
-                f"{API}/{method}",
-                data=params,
-                timeout=30,
-            )
+            r = requests.post(f"{API}/{method}", data=params, timeout=30)
         else:
-            response = requests.get(
-                f"{API}/{method}",
-                params=params,
-                timeout=30,
-            )
+            r = requests.get(f"{API}/{method}", params=params, timeout=30)
     except requests.RequestException as exc:
-        fail(f"Network error calling Telegram {method}: {exc}")
+        fail(f"Network error calling {method}: {exc}")
 
     try:
-        payload = response.json()
+        data = r.json()
     except ValueError:
-        fail(
-            f"Telegram returned non-JSON data for {method}: "
-            f"HTTP {response.status_code}: {response.text[:500]}"
-        )
+        fail(f"Telegram returned non-JSON for {method}: HTTP {r.status_code}")
 
-    if not payload.get("ok"):
-        raise RuntimeError(payload)
+    if not data.get("ok"):
+        raise RuntimeError(data)
 
-    return payload["result"]
-
-
-def telegram_get(method: str, **params):
-    return telegram_request(method, "GET", **params)
-
-
-def telegram_post(method: str, **params):
-    return telegram_request(method, "POST", **params)
+    return data["result"]
 
 
 def check_configuration() -> None:
     if not BOT_TOKEN:
-        fail(
-            "BOT_TOKEN is empty. Add Settings -> Secrets and variables -> "
-            "Actions -> Repository secret named BOT_TOKEN."
-        )
+        fail("BOT_TOKEN is empty. Add repository secret BOT_TOKEN.")
 
-    bot = telegram_get("getMe")
-    webhook = telegram_get("getWebhookInfo")
+    bot = tg("getMe")
+    webhook = tg("getWebhookInfo")
 
     print(
-        f"Telegram bot authenticated: "
-        f"@{bot.get('username', 'unknown')} (id={bot.get('id', 'unknown')})"
+        f"Telegram bot authenticated: @{bot.get('username', 'unknown')} "
+        f"(id={bot.get('id', 'unknown')})"
     )
 
     if webhook.get("url"):
-        fail(
-            "A webhook is configured. URL: "
-            f"{webhook['url']}. Remove it before using getUpdates."
-        )
+        fail(f"Webhook is configured: {webhook['url']}")
 
     print("Webhook check: PASS (url is empty)")
-    print(
-        "Telegram pending updates: "
-        f"{webhook.get('pending_update_count', 0)}"
-    )
+    print(f"Telegram pending updates: {webhook.get('pending_update_count', 0)}")
 
-    destination = telegram_get(
-        "getChat",
-        chat_id=DESTINATION_CHANNEL,
-    )
-    print(
-        "Destination check: PASS "
-        f"({destination.get('title', DESTINATION_CHANNEL)})"
-    )
+    dest = tg("getChat", chat_id=DESTINATION_CHANNEL)
+    print(f"Destination check: PASS ({dest.get('title', DESTINATION_CHANNEL)})")
 
     print("Source channel checks:")
     for channel in sorted(SOURCE_CHANNELS):
         try:
-            chat = telegram_get("getChat", chat_id=channel)
-            protected = bool(chat.get("has_protected_content", False))
+            chat = tg("getChat", chat_id=channel)
             print(
-                f"  {channel}: FOUND, "
-                f"protected_content={protected}"
+                f"  {channel}: FOUND, id={chat.get('id')}, "
+                f"protected_content={bool(chat.get('has_protected_content', False))}"
             )
         except RuntimeError as exc:
             fail(f"Cannot access source channel {channel}: {exc}")
 
 
 def get_updates(offset: int):
-    return telegram_get(
+    return tg(
         "getUpdates",
         offset=offset,
         limit=100,
@@ -167,11 +124,35 @@ def get_updates(offset: int):
 
 
 def forward_message(source_chat_id: int, message_id: int):
-    return telegram_post(
+    return tg(
         "forwardMessage",
+        "POST",
         chat_id=DESTINATION_CHANNEL,
         from_chat_id=source_chat_id,
         message_id=message_id,
+    )
+
+
+def copy_message(source_chat_id: int, message_id: int):
+    return tg(
+        "copyMessage",
+        "POST",
+        chat_id=DESTINATION_CHANNEL,
+        from_chat_id=source_chat_id,
+        message_id=message_id,
+    )
+
+
+def should_try_copy(error_text: str) -> bool:
+    text = error_text.lower()
+    return any(
+        phrase in text
+        for phrase in (
+            "message to forward not found",
+            "message_id_invalid",
+            "message id invalid",
+            "message to copy not found",
+        )
     )
 
 
@@ -179,7 +160,7 @@ def process():
     check_configuration()
 
     offset = load_offset()
-    skipped = load_skipped()
+    skipped = load_json(SKIPPED_FILE, {})
     updates = get_updates(offset)
 
     if not updates:
@@ -188,8 +169,8 @@ def process():
 
     highest_update_id = offset - 1
     forwarded = 0
+    copied = 0
     skipped_count = 0
-    unexpected_failures = 0
 
     for update in updates:
         update_id = update["update_id"]
@@ -205,111 +186,70 @@ def process():
         message_id = post.get("message_id")
 
         if source not in SOURCE_CHANNELS:
-            print(
-                f"Skipping update {update_id}: unconfigured source {source}"
-            )
+            print(f"Skipping unconfigured source {source}")
             continue
 
-        # Telegram may expose protected-content status on the message.
-        # Chat-wide protection is checked during configuration and also here
-        # for defense in depth.
         if post.get("has_protected_content") is True:
-            reason = "protected message"
             print(
-                f"SKIP {source} message {message_id}: {reason}. "
-                "Telegram does not permit forwarding protected content."
+                f"SKIP {source} message {message_id}: "
+                "protected content cannot be forwarded/copy-delivered."
             )
             skipped[str(update_id)] = {
                 "source": source,
                 "message_id": message_id,
-                "reason": reason,
+                "reason": "protected content",
             }
             skipped_count += 1
             continue
 
-        if str(update_id) in skipped:
-            print(
-                f"SKIP already recorded update {update_id} "
-                f"({source} message {message_id})"
-            )
-            skipped_count += 1
-            continue
-
         print(
-            f"Forwarding {source} message {message_id} "
+            f"Processing {source} message {message_id} "
             f"(update_id={update_id}) -> {DESTINATION_CHANNEL}"
         )
 
         try:
-            forward_message(
-                source_chat_id=chat["id"],
-                message_id=message_id,
-            )
+            forward_message(chat["id"], message_id)
+            print("  FORWARD PASS")
             forwarded += 1
-            print("  PASS")
-        except RuntimeError as exc:
-            details = str(exc)
+            continue
+        except RuntimeError as first_error:
+            print(f"  FORWARD FAILED: {first_error}")
 
-            # This exact error is commonly produced when Telegram can no
-            # longer forward the source message (for example, the message
-            # was deleted or the source chat protects its content).
-            # Do not let one bad update block every later update.
-            if (
-                "message to forward not found" in details.lower()
-                or "protected content" in details.lower()
-                or "chat_forwards_restricted" in details.lower()
-            ):
-                reason = "Telegram would not allow forwarding this message"
-                print(f"  SKIP: {reason}. API response: {details}")
-                skipped[str(update_id)] = {
-                    "source": source,
-                    "message_id": message_id,
-                    "reason": reason,
-                    "telegram_error": details,
-                }
-                skipped_count += 1
-                continue
+            # The real log showed "message to forward not found" for every
+            # queued update. Try Telegram copyMessage so a valid source post
+            # can still be delivered even when Telegram rejects forwarding.
+            if not should_try_copy(str(first_error)):
+                raise
 
-            # Retry transient errors once.
-            print("  Retrying once after transient Telegram error...")
-            time.sleep(2)
-
-            try:
-                forward_message(
-                    source_chat_id=chat["id"],
-                    message_id=message_id,
-                )
-                forwarded += 1
-                print("  PASS on retry")
-            except RuntimeError as retry_exc:
-                unexpected_failures += 1
-                fail(
-                    "Forwarding failed for "
-                    f"{source} message {message_id}. "
-                    f"Telegram error: {retry_exc}"
-                )
+        try:
+            copy_message(chat["id"], message_id)
+            print(
+                "  COPY FALLBACK PASS "
+                "(message delivered without the Telegram forwarded-from header)"
+            )
+            copied += 1
+        except RuntimeError as copy_error:
+            print(f"  COPY FALLBACK FAILED: {copy_error}")
+            skipped[str(update_id)] = {
+                "source": source,
+                "message_id": message_id,
+                "reason": "forward and copy failed",
+                "telegram_error": str(copy_error),
+            }
+            skipped_count += 1
 
     save_state(highest_update_id + 1)
     save_skipped(skipped)
 
     print(
         "Finished successfully. "
-        f"Forwarded={forwarded}, skipped={skipped_count}, "
-        f"offset={highest_update_id + 1}"
+        f"forwarded={forwarded}, copied={copied}, "
+        f"skipped={skipped_count}, offset={highest_update_id + 1}"
     )
-
-    if unexpected_failures:
-        fail(f"Unexpected forwarding failures: {unexpected_failures}")
-
-
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "--check":
-        check_configuration()
-        print("Configuration test: PASS")
-        return
-
-    process()
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--check":
+        check_configuration()
+    else:
+        process()
