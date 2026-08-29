@@ -1,0 +1,57 @@
+name: Telegram Science Forwarder
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: telegram-science-forwarder
+  cancel-in-progress: false
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      SOURCE_CHANNELS: "@ScienceNewsroom"
+      TARGET_CHANNEL: "@NewsroomHQ"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify source
+        run: python -m py_compile main.py
+
+      - name: Run offline self-test
+        run: python main.py --self-test
+
+      - name: Forward pending Telegram posts
+        run: python main.py
+
+      - name: Commit offset state
+        if: success()
+        run: |
+          git config user.name "Telegram Forwarder Bot"
+          git config user.email "actions@github.com"
+          git add state.json
+          if git diff --cached --quiet; then
+            echo "No state change."
+          else
+            git commit -m "Update Telegram forwarder offset"
+            git push
+          fi
