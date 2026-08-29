@@ -12,6 +12,7 @@ concurrency:
 jobs:
   forward:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
@@ -27,12 +28,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Validate Telegram bot configuration
+      - name: Validate Telegram configuration
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: python forward.py --check
 
-      - name: Forward new Telegram posts
+      - name: Process new Telegram posts
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: python forward.py
@@ -41,7 +42,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state.json
+          git add state.json skipped.json
           if git diff --cached --quiet; then
             echo "No state changes to commit."
           else
