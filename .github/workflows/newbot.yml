@@ -1,26 +1,30 @@
-name: Telegram Science Forwarder
+name: TheScienceNewsroom V1
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 7-23 * * *"
+      timezone: "Asia/Dhaka"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 concurrency:
-  group: telegram-science-forwarder
+  group: thesciencenewsroom-v1
   cancel-in-progress: false
 
 jobs:
-  forward:
+  run-news-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
 
     env:
+      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      SOURCE_CHANNELS: "@ScienceNewsroom"
-      TARGET_CHANNEL: "@NewsroomHQ"
+      TELEGRAM_CHANNEL: "@ScienceNewsroom"
+      TELEGRAM_FORWARD_TARGET: "@NewsroomHQ"
+      NEWS_MODE: "update"
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -33,25 +37,33 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
 
-      - name: Verify source
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Verify Python source
         run: python -m py_compile main.py
 
-      - name: Run offline self-test
+      - name: Run self-test
         run: python main.py --self-test
 
-      - name: Forward pending Telegram posts
+      - name: Run TheScienceNewsroom
         run: python main.py
 
-      - name: Commit offset state
-        if: success()
+      - name: Save state
+        if: always()
         run: |
-          git config user.name "Telegram Forwarder Bot"
+          git config user.name "Science News Bot"
           git config user.email "actions@github.com"
-          git add state.json
+          git add news_state.json posted_urls.txt
+
           if git diff --cached --quiet; then
-            echo "No state change."
+            echo "No state changes to commit."
           else
-            git commit -m "Update Telegram forwarder offset"
+            git commit -m "Update TheScienceNewsroom state"
             git push
           fi
