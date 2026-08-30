@@ -1,0 +1,49 @@
+name: Telegram Telethon Hourly Forwarder
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: telegram-telethon-hourly-forwarder
+  cancel-in-progress: false
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run hourly forwarder
+        env:
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: python forwarder.py
+
+      - name: Save forwarding state
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add telethon_state.json
+          if git diff --cached --quiet; then
+            echo "No state changes."
+          else
+            git commit -m "Update Telethon forwarding state"
+            git push
+          fi
