@@ -6,7 +6,11 @@ import sys
 from pathlib import Path
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, RPCError
+from telethon.errors import (
+    ChannelPrivateError,
+    FloodWaitError,
+    RPCError,
+)
 
 API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "").strip()
@@ -50,13 +54,15 @@ def validate_env():
 
 def load_state():
     if not STATE_FILE.exists():
-        return {"channels": {}}
+        return {"initialized": False, "channels": {}}
+
     try:
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(state, dict):
             raise ValueError("state is not an object")
-        data.setdefault("channels", {})
-        return data
+        state.setdefault("initialized", False)
+        state.setdefault("channels", {})
+        return state
     except Exception as exc:
         fail(f"Cannot read {STATE_FILE}: {exc}")
 
@@ -70,8 +76,66 @@ def save_state(state):
     tmp.replace(STATE_FILE)
 
 
-async def resolve_entity(client, username):
-    return await client.get_entity(username)
+async def get_latest_message_id(client, entity):
+    """Return the current highest message ID without scanning history."""
+    async for message in client.iter_messages(entity, limit=1):
+        return int(message.id)
+    return 0
+
+
+async def initialize_state(client):
+    """Initialize to the current channel heads.
+
+    This intentionally does not forward historical posts on first deployment.
+    """
+    state = {"initialized": True, "channels": {}}
+
+    for username in SOURCES:
+        try:
+            entity = await client.get_entity(username)
+            latest_id = await get_latest_message_id(client, entity)
+
+            if latest_id:
+                state["channels"][username] = {
+                    "last_message_id": latest_id
+                }
+                log.info(
+                    "INITIALIZE | source=%s | latest_message_id=%s",
+                    username,
+                    latest_id,
+                )
+            else:
+                state["channels"][username] = {
+                    "last_message_id": 0
+                }
+                log.warning(
+                    "INITIALIZE | source=%s | channel has no messages",
+                    username,
+                )
+
+        except ChannelPrivateError as exc:
+            fail(
+                f"Cannot access source {username}. "
+                f"Make sure the bot/account has access. Telegram: {exc}"
+            )
+        except FloodWaitError as exc:
+            fail(
+                f"Telegram requested a flood wait of {exc.seconds}s "
+                f"while initializing {username}."
+            )
+        except RPCError as exc:
+            fail(f"Telegram RPC error while initializing {username}: {exc}")
+        except Exception as exc:
+            fail(
+                f"Unexpected error while initializing {username}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    save_state(state)
+    log.info(
+        "INITIALIZATION COMPLETE | saved current channel heads; "
+        "no historical posts were forwarded."
+    )
 
 
 async def forward_one(client, target, source_username, source_entity, message):
@@ -83,15 +147,16 @@ async def forward_one(client, target, source_username, source_entity, message):
                 from_peer=source_entity,
             )
 
-            destination_id = None
             if isinstance(result, list):
-                if result:
-                    destination_id = getattr(result[0], "id", None)
+                destination_id = (
+                    getattr(result[0], "id", None) if result else None
+                )
             else:
                 destination_id = getattr(result, "id", None)
 
             log.info(
-                "FORWARD PASS | source=%s | source_message_id=%s | destination_message_id=%s",
+                "FORWARD PASS | source=%s | source_message_id=%s | "
+                "destination_message_id=%s",
                 source_username,
                 message.id,
                 destination_id,
@@ -105,13 +170,12 @@ async def forward_one(client, target, source_username, source_entity, message):
                 message.id,
                 exc.seconds,
             )
-            # In a one-hour job, sleeping for the requested Telegram wait is
-            # safer than losing the message. The workflow timeout is expanded.
             await asyncio.sleep(exc.seconds + 1)
 
         except RPCError as exc:
             log.warning(
-                "TELEGRAM ERROR | attempt=%s/3 | source=%s | message_id=%s | %s",
+                "FORWARD TELEGRAM ERROR | attempt=%s/3 | source=%s | "
+                "message_id=%s | %s",
                 attempt,
                 source_username,
                 message.id,
@@ -130,7 +194,8 @@ async def forward_one(client, target, source_username, source_entity, message):
 
         except Exception as exc:
             log.warning(
-                "UNEXPECTED ERROR | attempt=%s/3 | source=%s | message_id=%s | %s",
+                "FORWARD UNEXPECTED ERROR | attempt=%s/3 | source=%s | "
+                "message_id=%s | %s",
                 attempt,
                 source_username,
                 message.id,
@@ -158,84 +223,121 @@ async def process():
 
     me = await client.get_me()
     log.info(
-        "Authenticated | username=@%s | id=%s | bot=%s",
+        "AUTHENTICATED | username=@%s | id=%s | bot=%s",
         getattr(me, "username", "unknown"),
         me.id,
         getattr(me, "bot", False),
     )
 
-    target = await resolve_entity(client, TARGET)
-    log.info("Target resolved: %s", TARGET)
-
-    total_forwarded = 0
-    total_failed = 0
+    target = await client.get_entity(TARGET)
+    log.info("TARGET RESOLVED | %s", TARGET)
 
     try:
-        for source_username, entity_username in SOURCES.items():
-            source = await resolve_entity(client, source_username)
+        # First deployment: capture the current heads only.
+        if not state.get("initialized"):
+            await initialize_state(client)
+            return
 
-            # Telegram message IDs are monotonically increasing per channel.
-            last_id = int(
-                state["channels"].get(source_username, {}).get("last_message_id", 0)
-            )
+        total_forwarded = 0
+        total_failed = 0
 
-            log.info(
-                "CHECK | source=%s | last_message_id=%s",
-                source_username,
-                last_id,
-            )
-
-            # iter_messages(reverse=True) lets us process oldest first.
-            # min_id excludes the already processed message.
-            messages = []
-            async for message in client.iter_messages(
-                source,
-                min_id=last_id,
-                reverse=True,
-            ):
-                messages.append(message)
-
-            log.info(
-                "FOUND | source=%s | new_messages=%s",
-                source_username,
-                len(messages),
-            )
-
-            for message in messages:
-                if message.id <= last_id:
-                    continue
+        for source_username in SOURCES:
+            try:
+                source = await client.get_entity(source_username)
+                channel_state = state["channels"].setdefault(
+                    source_username,
+                    {"last_message_id": 0},
+                )
+                last_id = int(channel_state.get("last_message_id", 0))
 
                 log.info(
-                    "FORWARD ATTEMPT | source=%s | message_id=%s",
+                    "CHECK | source=%s | last_message_id=%s",
                     source_username,
-                    message.id,
+                    last_id,
                 )
 
-                ok = await forward_one(
-                    client,
-                    target,
-                    source_username,
+                # Only request messages newer than the saved ID.
+                # No reverse=True full-history scan.
+                messages = []
+                async for message in client.iter_messages(
                     source,
-                    message,
+                    min_id=last_id,
+                    limit=100,
+                ):
+                    if message.id > last_id:
+                        messages.append(message)
+
+                messages.reverse()
+
+                log.info(
+                    "FOUND | source=%s | new_messages=%s",
+                    source_username,
+                    len(messages),
                 )
 
-                if not ok:
-                    # Stop this source without advancing the failed message.
-                    # The next hourly run will retry it.
-                    total_failed += 1
-                    log.error(
-                        "STATE NOT ADVANCED | source=%s | failed_message_id=%s",
+                for message in messages:
+                    log.info(
+                        "FORWARD ATTEMPT | source=%s | message_id=%s",
                         source_username,
                         message.id,
                     )
-                    break
 
-                last_id = message.id
-                state["channels"][source_username] = {
-                    "last_message_id": last_id
-                }
-                save_state(state)
-                total_forwarded += 1
+                    ok = await forward_one(
+                        client,
+                        target,
+                        source_username,
+                        source,
+                        message,
+                    )
+
+                    if not ok:
+                        total_failed += 1
+                        log.error(
+                            "STATE NOT ADVANCED | source=%s | "
+                            "failed_message_id=%s",
+                            source_username,
+                            message.id,
+                        )
+                        break
+
+                    channel_state["last_message_id"] = message.id
+                    save_state(state)
+                    total_forwarded += 1
+
+            except ChannelPrivateError as exc:
+                total_failed += 1
+                log.error(
+                    "SOURCE ACCESS FAIL | source=%s | %s",
+                    source_username,
+                    exc,
+                )
+                break
+
+            except FloodWaitError as exc:
+                total_failed += 1
+                log.error(
+                    "SOURCE FLOOD WAIT | source=%s | seconds=%s",
+                    source_username,
+                    exc.seconds,
+                )
+                break
+
+            except RPCError as exc:
+                total_failed += 1
+                log.error(
+                    "SOURCE TELEGRAM ERROR | source=%s | %s",
+                    source_username,
+                    exc,
+                )
+                break
+
+            except Exception as exc:
+                total_failed += 1
+                log.exception(
+                    "SOURCE UNEXPECTED ERROR | source=%s",
+                    source_username,
+                )
+                break
 
         log.info(
             "FINISHED | forwarded=%s | failed=%s",

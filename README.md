@@ -1,154 +1,105 @@
-# Telethon + GitHub Actions Hourly Forwarder
+# Telethon + GitHub Actions Hourly Forwarder v2
 
-## Exact purpose
+## Purpose
 
-Every hour, check these four Telegram channels for posts newer than the
-last processed message ID and natively forward them to:
-
-`@NewsroomHQ`
-
-Sources:
+Every hour, check these four Telegram source channels and natively forward
+new posts to `@NewsroomHQ`:
 
 - `@BusinessNewsroom`
 - `@GamingNewsroom`
 - `@TheTechNewsroom`
 - `@EntertainmentNewsroom`
 
-## Architecture
+## Why v2
 
-```text
-GitHub Actions starts
-        |
-        v
-Telethon connects
-        |
-        v
-Read messages newer than stored ID
-        |
-        v
-forward_messages()
-        |
-        v
-@NewsroomHQ
-        |
-        v
-Save last successful message ID
-        |
-        v
-Exit
-```
+The previous hourly version started with `last_message_id=0` and attempted to
+scan channel history. That caused the source-history read to fail before the
+forwarding stage.
 
-This is deliberately a **batch process**, not `run_until_disconnected()`.
-Therefore it can run as an hourly GitHub Actions job and does not require a
-VPS.
+v2 has a safe first-run initialization:
 
-## Native forwarding
+1. Connect to Telegram.
+2. Resolve each source.
+3. Read only the latest message (`limit=1`).
+4. Save that current message ID as the starting point.
+5. Forward nothing from the existing history.
+6. Exit.
 
-The implementation uses Telethon:
+Every later run:
 
-```python
-client.forward_messages(
-    entity=target,
-    messages=message,
-    from_peer=source_entity,
-)
-```
+1. Read only messages with IDs greater than the saved ID.
+2. Process them oldest first.
+3. Forward each with Telethon `forward_messages()`.
+4. Save the message ID immediately after a successful forward.
+5. If a message fails, do not advance beyond it.
+6. The next hourly run retries it.
 
-It does not reconstruct the message and does not use the previous Bot API
-`getUpdates -> forwardMessage` implementation.
+## No content reconstruction
 
-No AI, HTML generation, article extraction, Pillow, or `sendMessage` is used.
+This project does not use:
 
-## State
+- `getUpdates`
+- Bot API `forwardMessage`
+- Bot API `copyMessage`
+- AI
+- HTML generation
+- article extraction
+- Pillow
+- `sendMessage`
+- `sendPhoto`
+- `sendVideo`
 
-State is stored in:
+It uses native Telethon forwarding.
 
-`telethon_state.json`
-
-Example:
-
-```json
-{
-  "channels": {
-    "@BusinessNewsroom": {
-      "last_message_id": 123
-    }
-  }
-}
-```
-
-The state is updated after every successful forward.
-
-If forwarding a message fails after retries, the state is NOT advanced past
-that message. The workflow exits with an error, and the next hourly run
-retries it.
-
-## GitHub secrets
-
-Add:
+## Required GitHub secrets
 
 - `API_ID`
 - `API_HASH`
 - `BOT_TOKEN`
 
-Never put these values in source files.
-
 ## Workflow
-
-Location:
 
 `.github/workflows/forward-hourly.yml`
 
-Schedule:
+The schedule is approximately hourly:
 
 `7 * * * *`
 
-This runs approximately once per hour.
+Manual execution is enabled with `workflow_dispatch`.
 
-`workflow_dispatch` is also enabled for manual testing.
+GitHub Actions schedule times can be delayed by GitHub.
 
-The state-save step uses:
+## Important
 
-```yaml
-if: always()
-```
+The first run intentionally forwards **zero historical messages**. It creates
+the starting point.
 
-## Telegram permissions
+Create a NEW post after initialization and run the workflow again.
 
-The bot must have appropriate administrator/posting permissions in all
-source channels and `@NewsroomHQ`.
-
-## Important limitation
-
-GitHub Actions scheduled jobs are not guaranteed to start at the exact
-minute and may be delayed by GitHub. This design is hourly batch processing,
-not real-time forwarding.
-
-## First live test
-
-1. Add `API_ID`, `API_HASH`, and `BOT_TOKEN` to GitHub Actions secrets.
-2. Commit this project to your repository.
-3. Run `Telegram Telethon Hourly Forwarder` manually.
-4. Create a NEW post in one source channel.
-5. Run the workflow manually again.
-6. Confirm the log contains:
+Expected log:
 
 ```text
+CHECK | source=@BusinessNewsroom | last_message_id=...
 FOUND | source=@BusinessNewsroom | new_messages=1
 FORWARD ATTEMPT | source=@BusinessNewsroom | message_id=...
 FORWARD PASS | source=@BusinessNewsroom | source_message_id=...
 ```
 
-7. Confirm the original post appears in `@NewsroomHQ`.
+## Telegram access
 
-## Important first-run behavior
+The bot/account must be able to access the four source channels and post to
+`@NewsroomHQ`.
 
-If `telethon_state.json` contains zero IDs, the first run will inspect the
-available message history and can forward many existing messages.
+If Telegram returns a source access error, the exact RPC error is printed in
+the GitHub Actions log.
 
-For a clean production start, initialize each source's `last_message_id` to
-the current latest message ID before enabling the hourly schedule, OR start
-with an empty state and intentionally process the backlog.
+## State
 
-Do not blindly use an old Bot API `update_id` as a Telethon message ID.
-They are different identifiers.
+State file:
+
+`telethon_state.json`
+
+The state is committed back to the repository after each successful forward.
+
+Do not manually replace a Telethon message ID with a Telegram Bot API
+`update_id`. They are different identifiers.
