@@ -20,6 +20,10 @@ SOURCES = {
     "@GamingNewsroom": "GamingNewsroom",
     "@TheTechNewsroom": "TheTechNewsroom",
     "@EntertainmentNewsroom": "EntertainmentNewsroom",
+    "@ScienceNewsroom": "ScienceNewsroom",
+    "@CareerNewsroom": "CareerNewsroom",
+    "@ComicsNewsroom": "ComicsNewsroom",
+    "@TheSportsNewsroom": "TheSportsNewsroom",
 }
 
 STATE_FILE = Path("telethon_state.json")

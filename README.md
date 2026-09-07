@@ -2,13 +2,17 @@
 
 ## Purpose
 
-Every hour, check these four Telegram source channels and natively forward
+Every hour, check these eight Telegram source channels and natively forward
 new posts to `@NewsroomHQ`:
 
 - `@BusinessNewsroom`
 - `@GamingNewsroom`
 - `@TheTechNewsroom`
 - `@EntertainmentNewsroom`
+- `@ScienceNewsroom`
+- `@CareerNewsroom`
+- `@ComicsNewsroom`
+- `@TheSportsNewsroom`
 
 ## Important authentication requirement
 
@@ -35,7 +39,7 @@ Do not print or commit the session string. It is equivalent to a login credentia
 
 The Telegram user account in `TELETHON_SESSION` must be able to:
 
-1. Access and read the history of all four source channels.
+1. Access and read the history of all eight source channels.
 2. Post/forward messages into `@NewsroomHQ`.
 
 For private source channels, the account must be a member with access.
@@ -63,7 +67,7 @@ The state file is intentionally reset to:
 ```
 
 For each accessible source, the first successful run captures only the current
-latest message ID. It forwards zero historical messages.
+latest message ID. This applies independently to all eight sources. It forwards zero historical messages.
 
 Each channel is initialized independently. If one source is inaccessible, the
 other sources still get their baselines and those baselines are persisted.
