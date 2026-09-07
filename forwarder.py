@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -59,7 +60,25 @@ def default_state():
     return {
         "initialized": False,
         "channels": {},
+        "footer_message_id": None,
     }
+
+
+SPECIALTY_FOOTER_HTML = """🎯 Want to go deeper? Explore our specialty channels:
+
+💼 <a href=\"https://t.me/BusinessNewsroom\">@BusinessNewsroom</a>
+🎮 <a href=\"https://t.me/GamingNewsroom\">@GamingNewsroom</a>
+💻 <a href=\"https://t.me/TheTechNewsroom\">@TheTechNewsroom</a>
+🔭 <a href=\"https://t.me/ScienceNewsroom\">@ScienceNewsroom</a>
+🎬 <a href=\"https://t.me/EntertainmentNewsroom\">@EntertainmentNewsroom</a>
+🎓 <a href=\"https://t.me/CareerNewsroom\">@CareerNewsroom</a>
+🦸 <a href=\"https://t.me/ComicsNewsroom\">@ComicsNewsroom</a>
+🏆 <a href=\"https://t.me/TheSportsNewsroom\">@TheSportsNewsroom</a>
+
+<blockquote>Newsroom, one network, all the news
+you need.</blockquote>
+
+Stay informed. Stay ahead. 🚀"""
 
 
 def normalize_channel_state(value):
@@ -129,6 +148,11 @@ def load_state():
 
     normalized = default_state()
     normalized["channels"] = channels
+    raw_footer_id = state.get("footer_message_id")
+    try:
+        normalized["footer_message_id"] = int(raw_footer_id) if raw_footer_id is not None else None
+    except (TypeError, ValueError):
+        normalized["footer_message_id"] = None
     for username in SOURCES:
         if username in channels:
             channel_state = normalize_channel_state(channels[username])
@@ -334,15 +358,87 @@ async def forward_one(client, target, source_username, source_entity, message):
     return False
 
 
-async def process_source(client, state, target, source_username, source_entity):
+async def delete_previous_footer(client, target, state):
+    """Delete the previous footer by its exact destination message ID."""
+    footer_id = state.get("footer_message_id")
+    if footer_id is None:
+        return True
+
+    try:
+        await client.delete_messages(target, [int(footer_id)])
+        log.info("FOOTER DELETE PASS | message_id=%s", footer_id)
+    except FloodWaitError as exc:
+        log.error("FOOTER DELETE FLOOD WAIT | message_id=%s | seconds=%s", footer_id, exc.seconds)
+        return False
+    except RPCError as exc:
+        # Telegram may report an already-deleted/invalid ID. In that case it is safe
+        # to clear our pointer and recreate the footer. Other API failures are real.
+        name = type(exc).__name__
+        log.warning(
+            "FOOTER DELETE TELEGRAM ERROR | message_id=%s | %s: %s",
+            footer_id, name, exc,
+        )
+        if name not in {"MessageIdInvalidError", "MessageDeleteForbiddenError", "MessageNotModifiedError"}:
+            return False
+    except Exception as exc:
+        log.warning(
+            "FOOTER DELETE UNEXPECTED ERROR | message_id=%s | %s: %s",
+            footer_id, type(exc).__name__, exc,
+        )
+        return False
+
+    state["footer_message_id"] = None
+    save_state(state)
+    return True
+
+
+async def post_footer(client, target, state):
+    """Post the specialty-channel footer and persist its exact destination ID."""
+    try:
+        result = await client.send_message(
+            entity=target,
+            message=SPECIALTY_FOOTER_HTML,
+            parse_mode="html",
+            link_preview=False,
+        )
+        footer_id = getattr(result, "id", None)
+        if footer_id is None:
+            raise RuntimeError("Telegram returned no footer message ID")
+        state["footer_message_id"] = int(footer_id)
+        save_state(state)
+        log.info("FOOTER POST PASS | message_id=%s", footer_id)
+        return True
+    except FloodWaitError as exc:
+        log.error("FOOTER POST FLOOD WAIT | seconds=%s", exc.seconds)
+    except RPCError as exc:
+        log.error("FOOTER POST TELEGRAM ERROR | %s: %s", type(exc).__name__, exc)
+    except Exception as exc:
+        log.exception("FOOTER POST UNEXPECTED ERROR | %s", type(exc).__name__)
+    return False
+
+
+async def collect_source_messages(client, state, source_username, source_entity):
+    """Collect the oldest next batch of pending messages for one source.
+
+    reverse=True is intentional: it makes Telethon return the oldest messages
+    after the saved ID first, so a large historical backlog cannot be skipped.
+    """
     channel_state = state["channels"].get(source_username)
     if not isinstance(channel_state, dict) or not channel_state.get("initialized"):
-        log.warning(
-            "SOURCE NOT INITIALIZED | source=%s | establishing safe baseline; no history will be forwarded",
+        channel_state = {
+            "initialized": True,
+            "last_message_id": 0,
+        }
+        state["channels"][source_username] = channel_state
+        state["initialized"] = all(
+            state["channels"].get(source, {}).get("initialized") is True
+            for source in SOURCES
+        )
+        save_state(state)
+        log.info(
+            "BACKFILL INIT | source=%s | starting_message_id=0",
             source_username,
         )
-        await initialize_channel(client, state, source_username, source_entity)
-        return 0, 0
 
     try:
         last_id = int(channel_state.get("last_message_id", 0))
@@ -355,16 +451,15 @@ async def process_source(client, state, target, source_username, source_entity):
             last_id,
         )
 
-        posted_urls = load_posted_urls()
         messages = []
         async for message in client.iter_messages(
             source_entity,
             min_id=last_id,
             limit=100,
+            reverse=True,
         ):
             if message.id > last_id:
                 messages.append(message)
-        messages.reverse()
 
         log.info(
             "FOUND | source=%s | batch_messages=%s | after_id=%s",
@@ -372,64 +467,7 @@ async def process_source(client, state, target, source_username, source_entity):
             len(messages),
             last_id,
         )
-
-        total_forwarded = 0
-        total_failed = 0
-
-        for message in messages:
-            url = message_url(source_username, message.id)
-
-            if not is_forwardable_message(message):
-                channel_state["last_message_id"] = int(message.id)
-                save_state(state)
-                log.info(
-                    "SKIP NON-NEWS | source=%s | message_id=%s | type=%s",
-                    source_username,
-                    message.id,
-                    type(message).__name__,
-                )
-                continue
-
-            if url in posted_urls:
-                channel_state["last_message_id"] = int(message.id)
-                save_state(state)
-                log.info(
-                    "DUPLICATE SKIP | source=%s | message_id=%s | url=%s",
-                    source_username,
-                    message.id,
-                    url,
-                )
-                continue
-
-            log.info(
-                "FORWARD ATTEMPT | source=%s | message_id=%s | url=%s",
-                source_username,
-                message.id,
-                url,
-            )
-            ok = await forward_one(
-                client,
-                target,
-                source_username,
-                source_entity,
-                message,
-            )
-            if not ok:
-                total_failed += 1
-                log.error(
-                    "STATE NOT ADVANCED | source=%s | failed_message_id=%s",
-                    source_username,
-                    message.id,
-                )
-                break
-
-            save_posted_url(url)
-            posted_urls.add(url)
-            channel_state["last_message_id"] = int(message.id)
-            save_state(state)
-            total_forwarded += 1
-
-        return total_forwarded, total_failed
+        return messages, None
 
     except ChannelPrivateError as exc:
         log.error(
@@ -456,7 +494,78 @@ async def process_source(client, state, target, source_username, source_entity):
             source_username,
             type(exc).__name__,
         )
-    return 0, 1
+    return [], 1
+
+
+def choose_next_source(active_sources, last_source):
+    """Choose a source randomly while avoiding consecutive same-source posts."""
+    choices = [source for source in active_sources if source != last_source]
+    if not choices:
+        choices = list(active_sources)
+    return random.choice(choices)
+
+
+async def process_one_message(
+    client,
+    state,
+    target,
+    source_username,
+    source_entity,
+    message,
+    posted_urls,
+):
+    """Process exactly one message and return (ok, forwarded, failed)."""
+    channel_state = state["channels"][source_username]
+    url = message_url(source_username, message.id)
+
+    if not is_forwardable_message(message):
+        channel_state["last_message_id"] = int(message.id)
+        save_state(state)
+        log.info(
+            "SKIP NON-NEWS | source=%s | message_id=%s | type=%s",
+            source_username,
+            message.id,
+            type(message).__name__,
+        )
+        return True, 0, 0
+
+    if url in posted_urls:
+        channel_state["last_message_id"] = int(message.id)
+        save_state(state)
+        log.info(
+            "DUPLICATE SKIP | source=%s | message_id=%s | url=%s",
+            source_username,
+            message.id,
+            url,
+        )
+        return True, 0, 0
+
+    log.info(
+        "FORWARD ATTEMPT | source=%s | message_id=%s | url=%s",
+        source_username,
+        message.id,
+        url,
+    )
+    ok = await forward_one(
+        client,
+        target,
+        source_username,
+        source_entity,
+        message,
+    )
+    if not ok:
+        log.error(
+            "STATE NOT ADVANCED | source=%s | failed_message_id=%s",
+            source_username,
+            message.id,
+        )
+        return False, 0, 1
+
+    save_posted_url(url)
+    posted_urls.add(url)
+    channel_state["last_message_id"] = int(message.id)
+    save_state(state)
+    return True, 1, 0
 
 
 async def process():
@@ -502,23 +611,123 @@ async def process():
 
         total_forwarded = 0
         total_failed = 0
+        posted_urls = load_posted_urls()
 
-        # Each channel is independent. A missing baseline is initialized safely and skipped.
+        # Remove the previous footer before forwarding so the newly posted footer can
+        # always be the final message in @NewsroomHQ.
+        footer_deleted = await delete_previous_footer(client, target, state)
+        if not footer_deleted:
+            fail("Could not remove the previous footer safely; aborting before forwarding.")
+
+        # Build one queue per source, then choose among active sources randomly.
+        # A source never gets two consecutive turns while another source has pending
+        # messages, so one channel cannot flood the target with its entire backlog.
+        source_queues = {}
+        blocked_sources = set()
+        exhausted_sources = set()
+
         for source_username in SOURCES:
             source_entity = sources.get(source_username)
             if source_entity is None:
+                blocked_sources.add(source_username)
                 total_failed += 1
                 continue
 
-            forwarded, failed = await process_source(
+            messages, failed = await collect_source_messages(
+                client,
+                state,
+                source_username,
+                source_entity,
+            )
+            if failed:
+                blocked_sources.add(source_username)
+                total_failed += failed
+                continue
+            source_queues[source_username] = list(messages)
+            if not messages:
+                exhausted_sources.add(source_username)
+
+        last_source = None
+        while True:
+            active_sources = [
+                source for source, queue in source_queues.items()
+                if queue and source not in blocked_sources
+            ]
+
+            if not active_sources:
+                # Refill sources whose current batch is exhausted. This allows the
+                # first run to backfill more than 100 posts per channel without ever
+                # reverting to one-channel-at-a-time ordering.
+                refill_candidates = [
+                    source for source in SOURCES
+                    if source in source_queues
+                    and source not in blocked_sources
+                    and source not in exhausted_sources
+                    and not source_queues[source]
+                ]
+                if not refill_candidates:
+                    break
+
+                for source_username in refill_candidates:
+                    source_entity = sources[source_username]
+                    messages, failed = await collect_source_messages(
+                        client,
+                        state,
+                        source_username,
+                        source_entity,
+                    )
+                    if failed:
+                        blocked_sources.add(source_username)
+                        total_failed += failed
+                        continue
+                    source_queues[source_username] = list(messages)
+                    if not messages:
+                        exhausted_sources.add(source_username)
+
+                continue
+
+            source_username = choose_next_source(active_sources, last_source)
+            source_entity = sources[source_username]
+            message = source_queues[source_username].pop(0)
+
+            ok, forwarded, failed = await process_one_message(
                 client,
                 state,
                 target,
                 source_username,
                 source_entity,
+                message,
+                posted_urls,
             )
             total_forwarded += forwarded
             total_failed += failed
+            last_source = source_username
+
+            if not ok:
+                blocked_sources.add(source_username)
+                log.error(
+                    "SOURCE BLOCKED FOR RUN | source=%s | remaining_messages=%s",
+                    source_username,
+                    len(source_queues[source_username]),
+                )
+                continue
+
+            if not source_queues[source_username]:
+                # The queue may have been exhausted. We intentionally fetch the next
+                # oldest batch before declaring the source finished.
+                messages, refill_failed = await collect_source_messages(
+                    client,
+                    state,
+                    source_username,
+                    source_entity,
+                )
+                if refill_failed:
+                    blocked_sources.add(source_username)
+                    total_failed += refill_failed
+                else:
+                    source_queues[source_username].extend(messages)
+                    if not messages:
+                        exhausted_sources.add(source_username)
 
         state["initialized"] = all(
             state["channels"].get(username, {}).get("initialized") is True
@@ -526,19 +735,23 @@ async def process():
         )
         save_state(state)
 
+        # Always recreate the footer at the end of the cycle, even when one or more
+        # source channels failed. This preserves the user's requested final-message behavior.
+        footer_posted = await post_footer(client, target, state)
+        if not footer_posted:
+            total_failed += 1
+
         log.info(
-            "FINISHED | initialized=%s | forwarded=%s | failed=%s | posted_urls=%s",
+            "FINISHED | initialized=%s | forwarded=%s | failed=%s | footer_posted=%s | posted_urls=%s",
             state["initialized"],
             total_forwarded,
             total_failed,
+            footer_posted,
             len(load_posted_urls()),
         )
 
-        # The cycle stays fault-tolerant. Fail visibly at the end if any channel failed,
-        # allowing GitHub Actions to mark the run red while still persisting valid state.
         if total_failed:
             raise SystemExit(2)
-
     finally:
         await client.disconnect()
 

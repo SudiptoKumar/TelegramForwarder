@@ -1,4 +1,4 @@
-# Telethon + GitHub Actions Hourly Forwarder v3
+# Telethon + GitHub Actions Hourly Forwarder v4
 
 ## Purpose
 
@@ -57,23 +57,17 @@ No API keys, tokens, or session strings are printed.
 
 ## First run and historical backfill
 
-The state is reset for a new deployment:
+The clean repository state for a new deployment is:
 
 ```json
 {
-  "initialized": true,
-  "channels": {
-    "@BusinessNewsroom": {"initialized": true, "last_message_id": 0},
-    "@GamingNewsroom": {"initialized": true, "last_message_id": 0},
-    "@TheTechNewsroom": {"initialized": true, "last_message_id": 0},
-    "@EntertainmentNewsroom": {"initialized": true, "last_message_id": 0},
-    "@ScienceNewsroom": {"initialized": true, "last_message_id": 0},
-    "@CareerNewsroom": {"initialized": true, "last_message_id": 0},
-    "@ComicsNewsroom": {"initialized": true, "last_message_id": 0},
-    "@TheSportsNewsroom": {"initialized": true, "last_message_id": 0}
-  }
+  "initialized": false,
+  "channels": {},
+  "footer_message_id": null
 }
 ```
+
+For any channel without a saved state, the forwarder starts at `last_message_id=0` and backfills its existing history. It does not take the latest message as a baseline.
 
 Unlike the previous baseline-only implementation, the first run now **backfills existing channel history**. It processes each source oldest-first and forwards existing news posts to `@NewsroomHQ`.
 
@@ -95,9 +89,36 @@ The URL is appended to `posted_urls.txt`. A URL already present in that file is 
 
 The per-channel `last_message_id` is also advanced only after successful forwarding or safe skipping of a non-news/service message. Both mechanisms work together so normal reruns do not duplicate posts.
 
+## Cross-channel randomized interleaving
+
+The forwarder does not exhaust one source channel before moving to the next.
+It collects a pending batch from every accessible source, then randomly selects
+which source supplies the next post. The immediately previous source is excluded
+when another source has pending messages, so one channel will not produce
+consecutive posts while other channels are waiting.
+
+The order of posts within each individual source remains chronological. Every
+pending post is still processed; only the cross-channel order is randomized.
+If a source has more than 100 pending messages, the next oldest batch is loaded
+automatically as its queue is exhausted, so a large backlog is not skipped.
+
+Example:
+
+```text
+Business 1
+Gaming 1
+Tech 1
+Science 1
+Business 2
+Sports 1
+Gaming 2
+Career 1
+...
+```
+
 ## Normal forwarding
 
-After a channel has a valid baseline, every run:
+After a channel has completed its backfill, every run:
 
 1. Read only messages newer than that channel's saved ID.
 2. Process messages oldest first.
@@ -131,6 +152,12 @@ This prevents a failed Telegram request from being silently marked as processed.
 
 The existing per-channel message-ID deduplication model is retained.
 
+## Persistent final specialty-channel message
+
+After every processing cycle, the forwarder keeps exactly one custom specialty-channel message as the last message in `@NewsroomHQ`. It stores that message's destination Telegram `message_id` in `telethon_state.json`. At the start of the next cycle, the previous footer is deleted by that exact ID. The eight source channels are then processed, and the same formatted footer is posted again at the end.
+
+The footer uses the same structure as the configured Newsroom message: the eight clickable specialty-channel usernames, the quoted slogan, and `Stay informed. Stay ahead. 🚀`. If a previous footer was manually deleted, its stored ID can safely be recreated. A real Telegram error while deleting or posting the footer causes a visible workflow failure.
+
 ## GitHub Actions
 
 Workflow: `.github/workflows/forward-hourly.yml`
@@ -148,7 +175,7 @@ permissions:
   contents: write
 ```
 
-After the Python process finishes, the workflow stages `telethon_state.json`.
+After the Python process finishes, the workflow stages `telethon_state.json` and `posted_urls.txt`.
 It commits and pushes only when either state file changed. `git push` is not suppressed,
 so a push failure makes the workflow visibly fail.
 
@@ -163,11 +190,10 @@ Do not put the string in this repository.
 ## First deployment test
 
 1. Add `API_ID`, `API_HASH`, and `TELETHON_SESSION` to GitHub Actions secrets.
-2. Confirm the user account can access all four sources and post in `@NewsroomHQ`.
+2. Confirm the user account can access all eight sources and post in `@NewsroomHQ`.
 3. Run the workflow manually.
-4. Confirm the first run establishes baselines and forwards zero old posts.
-5. Confirm the workflow commits and pushes `telethon_state.json`.
-6. Publish one new test post to a source channel.
-7. Run the workflow manually again.
-8. Confirm the new post appears in `@NewsroomHQ` and the corresponding
-   `last_message_id` advances only after successful forwarding.
+4. Confirm the first run starts backfill at message ID 0 and begins forwarding existing posts.
+5. Confirm `posted_urls.txt` and `telethon_state.json` are committed and pushed.
+6. Confirm the specialty-channel footer appears as the last message in `@NewsroomHQ`.
+7. Publish one new test post to a source channel and run the workflow again.
+8. Confirm the new post is forwarded and the previous footer is deleted/replaced at the end.
