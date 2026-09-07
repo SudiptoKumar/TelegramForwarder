@@ -1,9 +1,6 @@
-# Telethon + GitHub Actions Hourly Forwarder v3
+# Telethon + GitHub Actions Hourly Forwarder
 
-## Purpose
-
-Every hour, check these eight Telegram source channels and natively forward
-new posts to `@NewsroomHQ`:
+Forwards posts from these eight source channels to `@NewsroomHQ`:
 
 - `@BusinessNewsroom`
 - `@GamingNewsroom`
@@ -14,165 +11,63 @@ new posts to `@NewsroomHQ`:
 - `@ComicsNewsroom`
 - `@TheSportsNewsroom`
 
-## Important authentication requirement
+## Authentication
 
-This project uses **Telethon with a regular Telegram user account session**.
-It does not use a Telegram bot token for history polling.
+This project uses a regular Telegram user `StringSession` because Telethon history polling requires user access.
 
-Telegram's `messages.getHistory` method is used by Telethon's `iter_messages()`
-for normal history reads, and Telegram documents that method as user-only.
-Therefore a bot-authenticated Telethon client is not a reliable architecture for
-this hourly history-polling design.
-
-Create a Telethon `StringSession` once and store the complete value as the
-GitHub Actions secret `TELETHON_SESSION`.
-
-Required secrets:
+GitHub Actions secrets:
 
 - `API_ID`
 - `API_HASH`
 - `TELETHON_SESSION`
 
-Do not print or commit the session string. It is equivalent to a login credential.
+The user account must be able to read all eight source channels and post/forward into `@NewsroomHQ`.
 
-## Telegram permissions
+## Backfill behavior
 
-The Telegram user account in `TELETHON_SESSION` must be able to:
+The first successful run does **not** skip existing history. It starts from message ID `0` for every new channel and forwards existing posts oldest-first.
 
-1. Access and read the history of all eight source channels.
-2. Post/forward messages into `@NewsroomHQ`.
+The bot processes history in batches of 100 messages. After every successful forward it immediately stores:
 
-For private source channels, the account must be a member with access.
-For the target broadcast channel, the account must have permission to post.
+1. the source `last_message_id`
+2. the source post URL in `posted_urls.txt`
+3. the same URL in `telethon_state.json`
 
-The workflow prints an independent diagnostic for every source. Examples:
+If a forward fails, that message ID is not advanced. The next run retries it.
 
-```text
-SOURCE ACCESS PASS | @BusinessNewsroom accessible
-SOURCE ACCESS FAIL | source=@TheTechNewsroom | ChannelPrivateError: ...
-TARGET RESOLVED | @NewsroomHQ
-```
+Therefore an interrupted run resumes instead of starting over.
 
-No API keys, tokens, or session strings are printed.
+## Duplicate protection
 
-## First run and partial initialization
+Each public source message gets a URL such as:
 
-The state file is intentionally reset to:
+`https://t.me/BusinessNewsroom/123`
 
-```json
-{
-  "initialized": false,
-  "channels": {}
-}
-```
+A URL already present in the persisted deduplication history is skipped.
 
-For each accessible source, the first successful run captures only the current
-latest message ID. This applies independently to all eight sources. It forwards zero historical messages.
-
-Each channel is initialized independently. If one source is inaccessible, the
-other sources still get their baselines and those baselines are persisted.
-The failed source remains uninitialized and is retried on a later run.
-
-Example partial state:
-
-```json
-{
-  "initialized": false,
-  "channels": {
-    "@BusinessNewsroom": {
-      "initialized": true,
-      "last_message_id": 1234
-    },
-    "@GamingNewsroom": {
-      "initialized": true,
-      "last_message_id": 5678
-    },
-    "@TheTechNewsroom": {
-      "initialized": false
-    },
-    "@EntertainmentNewsroom": {
-      "initialized": true,
-      "last_message_id": 9012
-    }
-  }
-}
-```
-
-A successful baseline is never created for a channel that could not be read.
-
-## Normal forwarding
-
-After a channel has a valid baseline, every run:
-
-1. Read only messages newer than that channel's saved ID.
-2. Process messages oldest first.
-3. Forward each message with Telethon `forward_messages()`.
-4. Save that message ID only after the forward call succeeds.
-5. Stop that source at the first failed message so the failed ID is retried.
-6. Continue processing the other sources.
-
-A normal run therefore has this behavior:
-
-```text
-Business fails
-    -> log error
-    -> continue
-Gaming processes
-    -> continue
-Tech processes
-    -> continue
-Entertainment processes
-    -> continue
-save state
-```
+`posted_urls.txt` is maintained as a human-readable deduplication record. The authoritative state is also stored in `telethon_state.json` so recovery remains possible even if a run is interrupted.
 
 ## State safety
 
-`telethon_state.json` is written atomically through a temporary file and rename.
-The file is validated and normalized when loaded.
+State writes use temporary files followed by atomic replacement.
 
-The message ID is advanced only after a successful `forward_messages()` call.
-This prevents a failed Telegram request from being silently marked as processed.
+State advances only after a successful Telegram `forward_messages()` call.
 
-The existing per-channel message-ID deduplication model is retained.
+A source-level failure never stops processing of the other sources.
 
 ## GitHub Actions
 
-Workflow: `.github/workflows/forward-hourly.yml`
-
-Schedule:
-
-`7 * * * *`
-
-Manual execution is enabled with `workflow_dispatch`.
-
-The job has:
+The workflow runs hourly and supports manual execution. It uses:
 
 ```yaml
 permissions:
   contents: write
 ```
 
-After the Python process finishes, the workflow stages `telethon_state.json`.
-It commits and pushes only when the file changed. `git push` is not suppressed,
-so a push failure makes the workflow visibly fail.
+State is committed and pushed only when changed. `git push` failures are not suppressed.
 
-## Session setup
+## Important first deployment note
 
-Generate a Telethon user `StringSession` on a trusted machine using the same
-`API_ID` and `API_HASH`, complete the normal Telegram login/2FA flow, and store
-the resulting string as the GitHub repository secret `TELETHON_SESSION`.
+Because this version intentionally backfills historical posts, the first successful run can forward many messages. Keep the existing `timeout-minutes` and run manually first so you can monitor the result.
 
-Do not put the string in this repository.
-
-## First deployment test
-
-1. Add `API_ID`, `API_HASH`, and `TELETHON_SESSION` to GitHub Actions secrets.
-2. Confirm the user account can access all four sources and post in `@NewsroomHQ`.
-3. Run the workflow manually.
-4. Confirm the first run establishes baselines and forwards zero old posts.
-5. Confirm the workflow commits and pushes `telethon_state.json`.
-6. Publish one new test post to a source channel.
-7. Run the workflow manually again.
-8. Confirm the new post appears in `@NewsroomHQ` and the corresponding
-   `last_message_id` advances only after successful forwarding.
+Do not delete `telethon_state.json` or `posted_urls.txt` after backfill begins. Those files prevent duplicates and allow the process to resume safely.
