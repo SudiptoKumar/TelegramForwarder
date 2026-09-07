@@ -16,6 +16,22 @@
     "@EntertainmentNewsroom": {
       "initialized": true,
       "last_message_id": 333
+    },
+    "@ScienceNewsroom": {
+      "initialized": true,
+      "last_message_id": 196
+    },
+    "@CareerNewsroom": {
+      "initialized": true,
+      "last_message_id": 2
+    },
+    "@ComicsNewsroom": {
+      "initialized": true,
+      "last_message_id": 2
+    },
+    "@TheSportsNewsroom": {
+      "initialized": true,
+      "last_message_id": 2
     }
   }
 }
