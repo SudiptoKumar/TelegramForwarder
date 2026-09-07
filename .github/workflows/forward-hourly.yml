@@ -1,4 +1,4 @@
-name: Telegram Telethon Hourly Forwarder
+name: Telegram Telethon Hourly Forwarder V1
 
 on:
   # Bangladesh time (UTC+6): 8:00 AM through 2:00 AM next day.
@@ -38,6 +38,7 @@ jobs:
           API_ID: ${{ secrets.API_ID }}
           API_HASH: ${{ secrets.API_HASH }}
           TELETHON_SESSION: ${{ secrets.TELETHON_SESSION }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python forwarder.py
 
       - name: Save forwarding state
