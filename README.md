@@ -21,56 +21,51 @@ Target:
 
 - `@NewsroomHQ`
 
-## V1 footer: interactive Rich Message
+## V1 footer: Rich Message + Inline Keyboard
 
-The footer is sent through Telegram Bot API `sendRichMessage` using **`InputRichMessage.html` only**.
+The final Newsroom promotion is intentionally split into two Telegram-native layers:
 
-It does **not** use MarkdownV2 and does **not** send an `InputRichMessage.blocks` payload.
+1. **Rich Message HTML** for the editorial/premium content.
+2. **`InlineKeyboardMarkup`** for the eight channel links below the Rich Message.
 
-The HTML uses these Telegram Rich Message features:
+The Rich Message is sent through Telegram Bot API `sendRichMessage` using **`InputRichMessage.html` only**. It does not use MarkdownV2, `InputRichMessage.blocks`, `<tg-button>`, or `<tg-button-row>`.
 
-- `<h2>` for the main section heading.
-- `<h3>` for the “Choose your next feed.” instruction heading.
-- `<p>` for normal Rich paragraphs.
-- `<tg-button-row>` for four rows of clickable URL buttons.
-- Three-line button labels (`emoji` / blank spacer / padded category name) to increase vertical height and horizontal fill on mobile.
-- `<aside>` for the centered Pull Quote brand statement.
-
-Telegram Rich Message HTML does not expose CSS-style pixel height, padding, column width, or gap controls for `<tg-button>`. The implementation therefore uses three text lines (`emoji`, blank spacer, category) plus non-breaking spaces around the category name. This is the safest HTML-only way to make the buttons visibly taller and fuller while preserving the two-column structure. Exact pixel dimensions and the small inter-button/right-side space remain client-controlled by Telegram.
-
-The footer behaves like a small feed selector rather than a plain list:
+Current promotion content:
 
 ```text
-🧭 Where do you want to go?
+There's more to Newsroom.
 
-Choose your next feed.
-Tap a category and jump straight into the newsroom.
-
-PICK A FEED
-
-[    💼    ]      [    💻    ]
-[          ]      [          ]
-[ Business ]      [   Tech   ]
-
-[    🎮    ]      [    🔭    ]
-[          ]      [          ]
-[  Gaming  ]      [ Science  ]
-
-[      🎬       ] [    🎓    ]
-[               ] [          ]
-[ Entertainment ] [  Career  ]
-
-[    🦸    ]      [    🏆    ]
-[          ]      [          ]
-[  Comics  ]      [  Sports  ]
+Pick the feed you want next and stay close to what matters.
 
 [ centered pull quote ]
 One connected network, all the news you need.
 
-🚀 Start exploring.
+[ 💼 Business ] [ 💻 Tech ]
+[ 🎮 Gaming   ] [ 🔭 Science ]
+[ 🎬 Entertainment ] [ 🎓 Career ]
+[ 🦸 Comics   ] [ 🏆 Sports ]
 ```
 
-Telegram documents these Rich Message features in the official Bot API documentation: https://core.telegram.org/bots/api
+The keyboard is deliberately a normal `InlineKeyboardMarkup` attached through the `reply_markup` parameter of `sendRichMessage`. Telegram's Bot API explicitly supports `reply_markup` on `sendRichMessage`, with an inline keyboard represented as rows of `InlineKeyboardButton` objects. citeturn3view0
+
+### Mobile layout decisions
+
+- Exactly **2 buttons per row** and **4 rows**.
+- All eight buttons use the same plain URL-button structure and visual treatment.
+- Emoji stays at the beginning of every label for fast scanning.
+- `Entertainment` uses the full label `🎬 Entertainment`. Telegram clients decide whether that label fits on one line; the code does not use unsupported width, height, padding, or CSS tricks.
+- No artificial blank lines or padding characters are inserted into button labels.
+- No separate category heading, redundant instruction, or generic “Explore our specialty channels” copy is included.
+
+Telegram documents `InlineKeyboardMarkup` as an array of button rows, and `sendRichMessage` accepts it through `reply_markup`. citeturn0search0turn3view0
+
+## Promotion lifecycle
+
+The promotion remains the final message in `@NewsroomHQ`.
+
+At the beginning of a run, the previous saved footer message is deleted. At the end of the run, the new Rich Message is sent with the inline keyboard attached, and its destination `message_id` is stored for the next run.
+
+This keeps the channel from accumulating multiple copies of the promotion.
 
 ## Authentication
 
@@ -361,24 +356,26 @@ The bot token itself is never printed.
 
 ## What a successful footer test should show
 
-After the manual run, `@NewsroomHQ` should end with one footer message containing:
+After a manual run, `@NewsroomHQ` should end with one promotion message containing:
 
-- A large `🧭 Where do you want to go?` heading.
-- A large `🧭 Where do you want to go?` heading.
-- `Choose your next feed.` as an `h3`.
-- A short explanatory paragraph.
-- `PICK A FEED` section label.
-- Four rows of two clickable category buttons.
-- Each button uses a two-line label with emoji above category text.
-- A centered Pull Quote reading `One connected network, all the news you need.`
-- `🚀 Start exploring.` as the closing line.
-- `🚀 Start exploring.` as the closing line.
+- A strong `There's more to Newsroom.` heading.
+- One short personalization/CTA sentence.
+- A centered Pull Quote: `One connected network, all the news you need.`
+- Four rows of two inline URL buttons.
+- Exactly these eight labels:
+
+```text
+💼 Business       💻 Tech
+🎮 Gaming         🔭 Science
+🎬 Entertainment  🎓 Career
+🦸 Comics         🏆 Sports
+```
 
 The eight button destinations are:
 
 ```text
 Business       → https://t.me/BusinessNewsroom
-Technology     → https://t.me/TheTechNewsroom
+Tech           → https://t.me/TheTechNewsroom
 Gaming         → https://t.me/GamingNewsroom
 Science        → https://t.me/ScienceNewsroom
 Entertainment  → https://t.me/EntertainmentNewsroom
@@ -386,6 +383,8 @@ Career         → https://t.me/CareerNewsroom
 Comics         → https://t.me/ComicsNewsroom
 Sports         → https://t.me/TheSportsNewsroom
 ```
+
+The exact button height, width, and line wrapping remain Telegram-client controlled. The implementation does not attempt to override them.
 
 ## Troubleshooting
 
@@ -474,18 +473,17 @@ TelegramForwarder-V1/
                          │
                          ├── forwarded source posts
                          │
-                         └── final Rich Message footer
+                         └── final promotion
                                   │
                                   ▼
                          Telegram Bot API
                          sendRichMessage
-                         InputRichMessage.html
                                   │
-                  ┌───────────────┼───────────────┐
-                  ▼               ▼               ▼
-               Headings       Button rows      Details
-                  │                               │
-                  └───────────────┬───────────────┘
-                                  ▼
-                              Pull Quote
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+          InputRichMessage.html        InlineKeyboardMarkup
+                    │                           │
+              Heading + CTA               4 × 2 grid
+                    │                           │
+                Pull Quote                8 channel links
 ```

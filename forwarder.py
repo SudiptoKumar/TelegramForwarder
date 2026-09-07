@@ -71,44 +71,30 @@ def default_state():
     }
 
 
-SPECIALTY_FOOTER_HTML = """<h2>🧭 Where do you want to go?</h2>
-<h3>Choose your next feed.</h3>
-<p>Tap a category and jump straight into the newsroom.</p>
-<p><b>PICK A FEED</b></p>
-<tg-button-row>
-  <tg-button type="url" url="https://t.me/BusinessNewsroom">💼
+SPECIALTY_FOOTER_HTML = """<h2>There's more to Newsroom.</h2>
+<p>Pick the feed you want next and stay close to what matters.</p>
+<aside>One connected network, all the news you need.</aside>"""
 
- Business </tg-button>
-  <tg-button type="url" url="https://t.me/TheTechNewsroom">💻
-
- Tech </tg-button>
-</tg-button-row>
-<tg-button-row>
-  <tg-button type="url" url="https://t.me/GamingNewsroom">🎮
-
- Gaming </tg-button>
-  <tg-button type="url" url="https://t.me/ScienceNewsroom">🔭
-
- Science </tg-button>
-</tg-button-row>
-<tg-button-row>
-  <tg-button type="url" url="https://t.me/EntertainmentNewsroom">🎬
-
- Entertainment </tg-button>
-  <tg-button type="url" url="https://t.me/CareerNewsroom">🎓
-
- Career </tg-button>
-</tg-button-row>
-<tg-button-row>
-  <tg-button type="url" url="https://t.me/ComicsNewsroom">🦸
-
- Comics </tg-button>
-  <tg-button type="url" url="https://t.me/TheSportsNewsroom">🏆
-
- Sports </tg-button>
-</tg-button-row>
-<aside>One connected network, all the news you need.</aside>
-<p><b>🚀 Start exploring.</b></p>"""
+SPECIALTY_FOOTER_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "💼 Business", "url": "https://t.me/BusinessNewsroom"},
+            {"text": "💻 Tech", "url": "https://t.me/TheTechNewsroom"},
+        ],
+        [
+            {"text": "🎮 Gaming", "url": "https://t.me/GamingNewsroom"},
+            {"text": "🔭 Science", "url": "https://t.me/ScienceNewsroom"},
+        ],
+        [
+            {"text": "🎬 Entertainment", "url": "https://t.me/EntertainmentNewsroom"},
+            {"text": "🎓 Career", "url": "https://t.me/CareerNewsroom"},
+        ],
+        [
+            {"text": "🦸 Comics", "url": "https://t.me/ComicsNewsroom"},
+            {"text": "🏆 Sports", "url": "https://t.me/TheSportsNewsroom"},
+        ],
+    ]
+}
 
 BOT_API_BASE = "https://api.telegram.org/bot"
 
@@ -188,6 +174,11 @@ def bot_send_footer():
         {
             "chat_id": TARGET,
             "rich_message": rich_message,
+            "reply_markup": json.dumps(
+                SPECIALTY_FOOTER_KEYBOARD,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
         },
     )
 
