@@ -33,10 +33,10 @@ The HTML uses these Telegram Rich Message features:
 - `<h3>` for the “Choose your next feed.” instruction heading.
 - `<p>` for normal Rich paragraphs.
 - `<tg-button-row>` for four rows of clickable URL buttons.
-- Two-line button labels so the emoji sits above the category name and the button has enough vertical content for a taller mobile layout.
+- Three-line button labels (`emoji` / blank spacer / padded category name) to increase vertical height and horizontal fill on mobile.
 - `<aside>` for the centered Pull Quote brand statement.
 
-Telegram Rich Message HTML does not expose a CSS-style pixel height or padding property for `<tg-button>`. The V1 implementation therefore uses an explicit line break inside every button label (`emoji` on line 1, category on line 2) to create the intended taller two-line button presentation while keeping the existing two-column width.
+Telegram Rich Message HTML does not expose CSS-style pixel height, padding, column width, or gap controls for `<tg-button>`. The implementation therefore uses three text lines (`emoji`, blank spacer, category) plus non-breaking spaces around the category name. This is the safest HTML-only way to make the buttons visibly taller and fuller while preserving the two-column structure. Exact pixel dimensions and the small inter-button/right-side space remain client-controlled by Telegram.
 
 The footer behaves like a small feed selector rather than a plain list:
 
@@ -48,17 +48,21 @@ Tap a category and jump straight into the newsroom.
 
 PICK A FEED
 
-[   💼   ]      [   💻   ]
-[ Business ]    [  Tech  ]
+[    💼    ]      [    💻    ]
+[          ]      [          ]
+[ Business ]      [   Tech   ]
 
-[   🎮   ]      [   🔭   ]
-[ Gaming  ]     [ Science ]
+[    🎮    ]      [    🔭    ]
+[          ]      [          ]
+[  Gaming  ]      [ Science  ]
 
-[   🎬   ]      [   🎓   ]
-[Entertainment]  [ Career ]
+[      🎬       ] [    🎓    ]
+[               ] [          ]
+[ Entertainment ] [  Career  ]
 
-[   🦸   ]      [   🏆   ]
-[ Comics  ]     [ Sports ]
+[    🦸    ]      [    🏆    ]
+[          ]      [          ]
+[  Comics  ]      [  Sports  ]
 
 [ centered pull quote ]
 One connected network, all the news you need.

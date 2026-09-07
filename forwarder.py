@@ -77,27 +77,35 @@ SPECIALTY_FOOTER_HTML = """<h2>🧭 Where do you want to go?</h2>
 <p><b>PICK A FEED</b></p>
 <tg-button-row>
   <tg-button type="url" url="https://t.me/BusinessNewsroom">💼
-Business</tg-button>
+
+ Business </tg-button>
   <tg-button type="url" url="https://t.me/TheTechNewsroom">💻
-Tech</tg-button>
+
+ Tech </tg-button>
 </tg-button-row>
 <tg-button-row>
   <tg-button type="url" url="https://t.me/GamingNewsroom">🎮
-Gaming</tg-button>
+
+ Gaming </tg-button>
   <tg-button type="url" url="https://t.me/ScienceNewsroom">🔭
-Science</tg-button>
+
+ Science </tg-button>
 </tg-button-row>
 <tg-button-row>
   <tg-button type="url" url="https://t.me/EntertainmentNewsroom">🎬
-Entertainment</tg-button>
+
+ Entertainment </tg-button>
   <tg-button type="url" url="https://t.me/CareerNewsroom">🎓
-Career</tg-button>
+
+ Career </tg-button>
 </tg-button-row>
 <tg-button-row>
   <tg-button type="url" url="https://t.me/ComicsNewsroom">🦸
-Comics</tg-button>
+
+ Comics </tg-button>
   <tg-button type="url" url="https://t.me/TheSportsNewsroom">🏆
-Sports</tg-button>
+
+ Sports </tg-button>
 </tg-button-row>
 <aside>One connected network, all the news you need.</aside>
 <p><b>🚀 Start exploring.</b></p>"""
