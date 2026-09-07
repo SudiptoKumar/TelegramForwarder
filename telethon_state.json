@@ -3,7 +3,7 @@
   "channels": {
     "@BusinessNewsroom": {
       "initialized": true,
-      "last_message_id": 507
+      "last_message_id": 513
     },
     "@GamingNewsroom": {
       "initialized": true,
@@ -15,7 +15,7 @@
     },
     "@EntertainmentNewsroom": {
       "initialized": true,
-      "last_message_id": 341
+      "last_message_id": 353
     },
     "@ScienceNewsroom": {
       "initialized": true,
@@ -33,5 +33,6 @@
       "initialized": true,
       "last_message_id": 2
     }
-  }
+  },
+  "footer_message_id": 557
 }
