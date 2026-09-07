@@ -4,11 +4,11 @@ import logging
 import os
 import random
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from telethon import TelegramClient
 from telethon.errors import ChannelPrivateError, FloodWaitError, RPCError
@@ -71,13 +71,92 @@ def default_state():
     }
 
 
-SPECIALTY_FOOTER_HTML = """<p><b>🎯 Want to go deeper? Explore our specialty channels:</b></p>
+SPECIALTY_FOOTER_HTML = """<h2>🎯 Want to go deeper?</h2>
+<p>Explore our specialty channels:</p>
 <p>💼 <a href="https://t.me/BusinessNewsroom">@BusinessNewsroom</a><br>🎮 <a href="https://t.me/GamingNewsroom">@GamingNewsroom</a><br>💻 <a href="https://t.me/TheTechNewsroom">@TheTechNewsroom</a><br>🔭 <a href="https://t.me/ScienceNewsroom">@ScienceNewsroom</a><br>🎬 <a href="https://t.me/EntertainmentNewsroom">@EntertainmentNewsroom</a><br>🎓 <a href="https://t.me/CareerNewsroom">@CareerNewsroom</a><br>🦸 <a href="https://t.me/ComicsNewsroom">@ComicsNewsroom</a><br>🏆 <a href="https://t.me/TheSportsNewsroom">@TheSportsNewsroom</a></p>
 <aside>Newsroom, one network, all the news you need.</aside>
-<p><b>Stay informed. Stay ahead. 🚀</b></p>"""
+<h2>Stay informed. Stay ahead. 🚀</h2>"""
 
 BOT_API_BASE = "https://api.telegram.org/bot"
 
+
+
+def bot_api_call(method, data=None, timeout=30, retries=3):
+    """Call the Telegram Bot API without adding another Python dependency."""
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+
+    url = f"{BOT_API_BASE}{TELEGRAM_BOT_TOKEN}/{method}"
+    encoded = urllib.parse.urlencode(data or {}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=encoded,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not payload.get("ok"):
+                raise RuntimeError(
+                    f"Bot API {method} failed: {payload.get('description', 'unknown error')}"
+                )
+            return payload["result"]
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+                payload = json.loads(body)
+                description = payload.get("description", str(exc))
+            except Exception:
+                description = str(exc)
+            last_error = RuntimeError(f"Bot API {method} HTTP {exc.code}: {description}")
+            if exc.code < 500 and exc.code != 429:
+                raise last_error
+            if attempt < retries:
+                retry_after = 2
+                try:
+                    retry_after = int(payload.get("parameters", {}).get("retry_after", retry_after))
+                except Exception:
+                    pass
+                time.sleep(max(1, retry_after))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, RuntimeError) as exc:
+            last_error = exc
+            if attempt < retries:
+                time.sleep(attempt * 2)
+            else:
+                break
+
+    raise last_error or RuntimeError(f"Bot API {method} failed")
+
+
+def bot_delete_footer(footer_id):
+    """Best-effort Bot API deletion for a footer previously sent by the bot."""
+    result = bot_api_call(
+        "deleteMessage",
+        {"chat_id": TARGET, "message_id": int(footer_id)},
+    )
+    return bool(result)
+
+
+def bot_send_footer():
+    """Send the footer through Rich Messages using InputRichMessage.html only."""
+    rich_message = json.dumps(
+        {
+            "html": SPECIALTY_FOOTER_HTML,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return bot_api_call(
+        "sendRichMessage",
+        {
+            "chat_id": TARGET,
+            "rich_message": rich_message,
+        },
+    )
 
 
 def normalize_channel_state(value):
@@ -357,147 +436,80 @@ async def forward_one(client, target, source_username, source_entity, message):
     return False
 
 
-def bot_api_call(method, data, timeout=30):
-    """Call a Telegram Bot API method using the configured bot token."""
-    url = f"{BOT_API_BASE}{TELEGRAM_BOT_TOKEN}/{method}"
-    encoded = urlencode(data).encode("utf-8")
-    request = Request(
-        url,
-        data=encoded,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    for attempt in range(1, 4):
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                raw = response.read().decode("utf-8")
-            payload = json.loads(raw)
-            if not payload.get("ok"):
-                raise RuntimeError(payload.get("description", "Telegram Bot API request failed"))
-            return payload.get("result")
-        except HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            try:
-                payload = json.loads(body)
-                description = payload.get("description", body)
-                parameters = payload.get("parameters", {}) or {}
-            except json.JSONDecodeError:
-                description = body or str(exc)
-                parameters = {}
-            retry_after = parameters.get("retry_after")
-            if exc.code == 429 and retry_after and attempt < 3:
-                log.warning("BOT API RATE LIMIT | method=%s | retry_after=%s", method, retry_after)
-                time.sleep(int(retry_after) + 1)
-                continue
-            if exc.code >= 500 and attempt < 3:
-                log.warning("BOT API SERVER ERROR | method=%s | http=%s | attempt=%s/3", method, exc.code, attempt)
-                time.sleep(attempt * 2)
-                continue
-            raise RuntimeError(f"Bot API HTTP {exc.code}: {description}") from exc
-        except (URLError, TimeoutError, OSError) as exc:
-            if attempt < 3:
-                log.warning("BOT API NETWORK ERROR | method=%s | attempt=%s/3 | %s", method, attempt, exc)
-                time.sleep(attempt * 2)
-                continue
-            raise RuntimeError(f"Bot API network error: {exc}") from exc
-
-
-def delete_footer_with_bot(footer_id):
-    """Best-effort deletion of a bot-authored footer via Bot API."""
-    result = bot_api_call(
-        "deleteMessage",
-        {"chat_id": TARGET, "message_id": int(footer_id)},
-    )
-    return result is True
-
-
-def post_footer_with_bot():
-    """Post the footer as a Telegram Rich Message and return its message ID."""
-    rich_message = {"html": SPECIALTY_FOOTER_HTML}
-    result = bot_api_call(
-        "sendRichMessage",
-        {
-            "chat_id": TARGET,
-            "rich_message": json.dumps(rich_message, ensure_ascii=False),
-        },
-    )
-    if not isinstance(result, dict) or result.get("message_id") is None:
-        raise RuntimeError("Telegram Bot API returned no footer message ID")
-    return int(result["message_id"])
-
-
 async def delete_previous_footer(client, target, state):
-    """Delete the previous footer by its exact message ID.
+    """Delete the previous footer by its exact destination message ID.
 
-    The footer in V1 is posted by the Bot API. Telethon deletion is attempted first
-    so the upgrade can also remove a footer created by the previous Telethon version.
-    The Bot API is used as a fallback for bot-authored footers.
+    Try the Telethon user session first for backwards compatibility with older
+    footer messages. If that fails, try Bot API deletion for bot-authored footers.
     """
     footer_id = state.get("footer_message_id")
     if footer_id is None:
         return True
 
+    footer_id = int(footer_id)
+    telethon_error = None
     try:
-        await client.delete_messages(target, [int(footer_id)])
+        await client.delete_messages(target, [footer_id])
         log.info("FOOTER DELETE PASS | method=telethon | message_id=%s", footer_id)
+        state["footer_message_id"] = None
+        save_state(state)
+        return True
     except FloodWaitError as exc:
-        log.error("FOOTER DELETE FLOOD WAIT | message_id=%s | seconds=%s", footer_id, exc.seconds)
-        return False
+        telethon_error = exc
+        log.warning("FOOTER DELETE TELETHON FLOOD WAIT | message_id=%s | seconds=%s", footer_id, exc.seconds)
     except RPCError as exc:
+        telethon_error = exc
         log.warning(
             "FOOTER DELETE TELETHON ERROR | message_id=%s | %s: %s",
             footer_id, type(exc).__name__, exc,
         )
-        try:
-            deleted = delete_footer_with_bot(footer_id)
-            if deleted:
-                log.info("FOOTER DELETE PASS | method=bot_api | message_id=%s", footer_id)
-            else:
-                log.warning("FOOTER DELETE BOT API RETURNED FALSE | message_id=%s", footer_id)
-        except Exception as bot_exc:
-            name = type(exc).__name__
-            if name in {"MessageIdInvalidError", "MessageDeleteForbiddenError", "MessageNotModifiedError"}:
-                log.warning("FOOTER DELETE ALREADY GONE | message_id=%s", footer_id)
-            else:
-                log.error(
-                    "FOOTER DELETE BOTH METHODS FAILED | message_id=%s | bot=%s",
-                    footer_id, type(bot_exc).__name__,
-                )
-                return False
     except Exception as exc:
+        telethon_error = exc
         log.warning(
-            "FOOTER DELETE UNEXPECTED ERROR | message_id=%s | %s: %s",
+            "FOOTER DELETE TELETHON UNEXPECTED | message_id=%s | %s: %s",
             footer_id, type(exc).__name__, exc,
         )
-        try:
-            deleted = delete_footer_with_bot(footer_id)
-            if not deleted:
-                log.error("FOOTER DELETE BOT API RETURNED FALSE | message_id=%s", footer_id)
-                return False
-            log.info("FOOTER DELETE PASS | method=bot_api | message_id=%s", footer_id)
-        except Exception as bot_exc:
-            log.error(
-                "FOOTER DELETE BOTH METHODS FAILED | message_id=%s | bot=%s",
-                footer_id, type(bot_exc).__name__,
-            )
-            return False
 
-    state["footer_message_id"] = None
-    save_state(state)
-    return True
-
-
-async def post_footer(client, target, state):
-    """Post the specialty footer as a centered Telegram Rich Message Pull Quote."""
     try:
-        footer_id = post_footer_with_bot()
-        state["footer_message_id"] = footer_id
+        if bot_delete_footer(footer_id):
+            log.info("FOOTER DELETE PASS | method=bot_api | message_id=%s", footer_id)
+            state["footer_message_id"] = None
+            save_state(state)
+            return True
+    except Exception as exc:
+        log.warning(
+            "FOOTER DELETE BOT API ERROR | message_id=%s | %s: %s",
+            footer_id, type(exc).__name__, exc,
+        )
+
+    # If Telegram already says the message ID is invalid, it is safe to clear the pointer.
+    if isinstance(telethon_error, RPCError) and type(telethon_error).__name__ in {
+        "MessageIdInvalidError",
+        "MessageDeleteForbiddenError",
+        "MessageNotModifiedError",
+    }:
+        state["footer_message_id"] = None
         save_state(state)
-        log.info("FOOTER POST PASS | method=bot_api_rich_message | message_id=%s", footer_id)
+        log.info("FOOTER DELETE ASSUMED ALREADY REMOVED | message_id=%s", footer_id)
+        return True
+
+    return False
+
+
+async def post_footer(state):
+    """Post the specialty footer through Bot API sendRichMessage and store its ID."""
+    try:
+        result = bot_send_footer()
+        footer_id = result.get("message_id") if isinstance(result, dict) else None
+        if footer_id is None:
+            raise RuntimeError("Telegram Bot API returned no footer message_id")
+        state["footer_message_id"] = int(footer_id)
+        save_state(state)
+        log.info("FOOTER POST PASS | method=bot_api | message_id=%s", footer_id)
         return True
     except Exception as exc:
-        log.error("FOOTER POST TELEGRAM BOT API ERROR | %s: %s", type(exc).__name__, exc)
-    return False
+        log.exception("FOOTER POST BOT API ERROR | %s: %s", type(exc).__name__, exc)
+        return False
 
 
 async def collect_source_messages(client, state, source_username, source_entity):
@@ -683,16 +695,6 @@ async def process():
             )
 
         try:
-            bot_info = bot_api_call("getMe", {})
-            log.info(
-                "BOT AUTHENTICATED | username=@%s | id=%s",
-                bot_info.get("username", "unknown"),
-                bot_info.get("id", "unknown"),
-            )
-        except Exception as exc:
-            fail(f"Cannot authenticate Telegram bot token: {type(exc).__name__}: {exc}")
-
-        try:
             target = await client.get_entity(TARGET)
             log.info("TARGET RESOLVED | %s", TARGET)
         except Exception as exc:
@@ -830,7 +832,7 @@ async def process():
 
         # Always recreate the footer at the end of the cycle, even when one or more
         # source channels failed. This preserves the user's requested final-message behavior.
-        footer_posted = await post_footer(client, target, state)
+        footer_posted = await post_footer(state)
         if not footer_posted:
             total_failed += 1
 

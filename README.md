@@ -1,149 +1,174 @@
 # Telegram Forwarder V1
 
-A GitHub Actions + Telethon forwarder for `@NewsroomHQ` that collects posts from eight Newsroom specialty channels, backfills existing history, forwards future posts, prevents duplicates, mixes sources in randomized order, and keeps one permanent specialty-channel footer as the final message.
+A GitHub Actions bot that **natively forwards new and historical posts** from 8 Newsroom specialty channels into `@NewsroomHQ`, keeps the channels interleaved, prevents duplicates, and maintains one reusable specialty-channel footer as the final message.
 
-## What V1 does
+## 1. What this project does
 
-Every scheduled run checks these eight source channels:
+The forwarder watches these source channels:
 
-1. `@BusinessNewsroom`
-2. `@GamingNewsroom`
-3. `@TheTechNewsroom`
-4. `@EntertainmentNewsroom`
-5. `@ScienceNewsroom`
-6. `@CareerNewsroom`
-7. `@ComicsNewsroom`
-8. `@TheSportsNewsroom`
+| Source | Category |
+|---|---|
+| `@BusinessNewsroom` | Business |
+| `@GamingNewsroom` | Gaming |
+| `@TheTechNewsroom` | Technology |
+| `@EntertainmentNewsroom` | Entertainment |
+| `@ScienceNewsroom` | Science |
+| `@CareerNewsroom` | Career |
+| `@ComicsNewsroom` | Comics |
+| `@TheSportsNewsroom` | Sports |
 
-Destination:
+All accepted posts are forwarded to:
 
 `@NewsroomHQ`
 
-The forwarder uses a normal Telegram user session for reading channel history and forwarding messages. A separate Telegram bot token is used only for the V1 Rich Message footer.
+The forwarding itself is done by a **regular Telegram user session through Telethon**. The specialty footer is sent separately through the **Telegram Bot API `sendRichMessage`** method.
 
----
+## 2. V1 architecture
 
-## Why two Telegram credentials are used
+V1 deliberately uses two Telegram identities for two different jobs:
 
-### 1. Telethon user session
+### Telethon user session
 
-`TELETHON_SESSION` belongs to a regular Telegram user account.
+Used for:
 
-This is required because this project reads Telegram channel history with Telethon's history APIs. A bot account is not used for the history-reading part of this design.
+- Reading source-channel history.
+- Detecting new messages after the saved message ID.
+- Natively forwarding source messages to `@NewsroomHQ`.
+- Deleting the previous footer when possible.
 
-The user account must be able to read all eight source channels and post/forward into `@NewsroomHQ`.
+A regular user session is required for this history-polling design because Telegram history methods used by Telethon are not available to bot accounts in the same way.
 
-### 2. Telegram bot token
+### Telegram Bot API bot
 
-`TELEGRAM_BOT_TOKEN` belongs to a Telegram bot that can post and delete its own footer messages in `@NewsroomHQ`.
+Used only for the footer:
 
-V1 uses the Bot API `sendRichMessage` method to create the footer. The footer's slogan is rendered with Telegram's **Pull Quote** block using Rich HTML `<aside>`, which is designed for centered quotation text. The current Telegram Bot API documents `RichBlockPullQuotation` as a centered quotation and `<aside>` as its HTML equivalent. citeturn658733search0
+- `sendRichMessage`
+- `InputRichMessage.html`
+- Rich HTML only
+- No MarkdownV2
+- No `InputRichMessage.blocks`
 
-The bot token is **not** used to read source history or replace the Telethon user session.
+The footer therefore stays independent from the native forwarded news messages.
 
----
+Telegram documents `InputRichMessage` as accepting exactly one of `html`, `markdown`, or `blocks`, and documents `sendRichMessage` as the method for sending rich messages. The Rich HTML system maps paragraph and heading tags to the corresponding rich blocks. citehttps://core.telegram.org/bots/api
 
-## Required GitHub Secrets
+## 3. Footer design
+
+The footer is built as Rich HTML:
+
+```html
+<h2>🎯 Want to go deeper?</h2>
+<p>Explore our specialty channels:</p>
+<p>...eight clickable channel links...</p>
+<aside>Newsroom, one network, all the news you need.</aside>
+<h2>Stay informed. Stay ahead. 🚀</h2>
+```
+
+This is intentional.
+
+- `<h2>` creates a Rich Message **Section Heading**.
+- `<p>` creates a **Paragraph** block.
+- `<aside>` creates a **Pull Quote**, which is the centered quotation style.
+
+Telegram documents `<aside>` as the HTML representation of `InputRichBlockPullQuotation`, described as a quotation with centered text. citehttps://core.telegram.org/bots/api
+
+The footer does **not** use `InputRichMessage.blocks`.
+
+## 4. Required GitHub repository secrets
 
 Create these four repository secrets:
 
-| Secret | Used for |
-|---|---|
-| `API_ID` | Telegram API ID for Telethon |
-| `API_HASH` | Telegram API hash for Telethon |
-| `TELETHON_SESSION` | Logged-in regular Telegram user session |
-| `TELEGRAM_BOT_TOKEN` | Bot API Rich Message footer |
-
-Never print, commit, or place any of these secrets directly in the repository.
-
----
-
-## Telegram permissions
-
-### Telethon user account
-
-The account inside `TELETHON_SESSION` needs permission to:
-
-- Read history from all eight source channels.
-- Access private source channels if any are private.
-- Post or forward messages into `@NewsroomHQ`.
-- Delete the previous footer from `@NewsroomHQ`.
-
-### Footer bot
-
-The bot represented by `TELEGRAM_BOT_TOKEN` needs permission to post in `@NewsroomHQ` and delete messages it is responsible for there.
-
-The program verifies the bot token with `getMe` before processing. It never logs the token itself.
-
----
-
-## How forwarding works
-
-V1 keeps a separate `last_message_id` for every source.
-
-For each source:
-
-1. Find messages newer than the saved message ID.
-2. Read them oldest-first.
-3. Skip Telegram service messages and empty messages.
-4. Check `posted_urls.txt` for an already-forwarded source URL.
-5. Forward the message with Telethon.
-6. Only after a successful forward, save the source URL and advance the source's last message ID.
-
-This means a failed Telegram forward is **not** silently marked as complete. The failed message remains retryable on a later run.
-
----
-
-## Historical backfill
-
-A new source has no baseline message ID, so V1 starts at message ID `0` and backfills existing history.
-
-It does **not** simply record the current latest message and skip everything before it.
-
-Messages are fetched oldest-first. Large backlogs are handled in batches, so a source with more than 100 pending posts is not abandoned after the first batch.
-
-Service messages are skipped safely because they are not ordinary news posts.
-
-Backfill is resumable. If a source fails at message `N`, the saved state remains before that failed message, so the next run can retry it.
-
----
-
-## Duplicate protection
-
-V1 uses two complementary checks:
-
-### Message ID state
-
-`telethon_state.json` stores the latest successfully processed message ID for every source.
-
-Example:
-
-```json
-{
-  "@BusinessNewsroom": {
-    "initialized": true,
-    "last_message_id": 513
-  }
-}
+```text
+API_ID
+API_HASH
+TELETHON_SESSION
+TELEGRAM_BOT_TOKEN
 ```
 
-### Permanent URL list
+### What each one is
 
-`posted_urls.txt` stores source URLs such as:
+| Secret | Purpose |
+|---|---|
+| `API_ID` | Telegram application ID used by Telethon |
+| `API_HASH` | Telegram application hash used by Telethon |
+| `TELETHON_SESSION` | Logged-in regular Telegram user `StringSession` |
+| `TELEGRAM_BOT_TOKEN` | Bot token used only for the Rich Message footer |
+
+### Important naming rule
+
+The workflow expects the exact name:
 
 ```text
-https://t.me/BusinessNewsroom/513
+TELEGRAM_BOT_TOKEN
 ```
 
-When a URL is already present, that post is skipped instead of being forwarded again.
+A secret named `BOT_TOKEN` is **not the same secret name** and will not be read automatically.
 
----
+If an existing `BOT_TOKEN` contains the correct bot token, create `TELEGRAM_BOT_TOKEN` with the same value and then remove `BOT_TOKEN` when nothing else in the repository uses it.
 
-## Randomized cross-channel order
+## 5. Telegram permissions
 
-V1 does not empty one channel completely before checking the others.
+### The Telethon user account must be able to
 
-It builds a queue for every accessible source and randomly chooses the next source. When possible, the source used immediately before is excluded from the next choice.
+- Read all 8 source channels.
+- Access their message history.
+- Post or forward messages into `@NewsroomHQ`.
+- Delete the previous footer if you want the fallback cleanup through the user session to work.
+
+### The footer bot must be able to
+
+- Access `@NewsroomHQ`.
+- Send messages to `@NewsroomHQ`.
+- Delete its own footer message on later runs.
+
+For a broadcast channel, the bot should be added with the required administrator permissions for posting and deleting messages.
+
+## 6. First run and historical backfill
+
+A new deployment starts with no saved source position.
+
+For every accessible source, V1 starts from:
+
+```text
+last_message_id = 0
+```
+
+It then reads history **oldest first** and forwards pending posts.
+
+V1 does not use the newest message as a baseline. That means existing channel history is eligible for backfill.
+
+Backfill is resumable. If forwarding fails on a message, that source is blocked for the current run and the failed message is not advanced in state. The next workflow run can retry it.
+
+Telegram service messages that are not normal forwardable posts are skipped safely.
+
+## 7. Normal hourly operation
+
+After a source has caught up, every workflow run does this:
+
+1. Load `telethon_state.json`.
+2. Connect with the Telethon user session.
+3. Resolve the target and source channels independently.
+4. Delete the previous stored footer.
+5. Read messages newer than each source's saved `last_message_id`.
+6. Interleave messages from different sources randomly.
+7. Forward each message with Telethon.
+8. Record its source URL in `posted_urls.txt` after success.
+9. Advance that source's `last_message_id` only after safe processing.
+10. Save state.
+11. Send the Rich Message footer through `sendRichMessage`.
+12. Store the footer's destination message ID.
+
+The footer is therefore always recreated as the final message of the run.
+
+## 8. Random cross-channel interleaving
+
+V1 does not post one entire channel backlog before another.
+
+It creates a queue for every available source and randomly chooses which source provides the next message.
+
+When possible, the immediately previous source is excluded, so two consecutive posts do not normally come from the same channel while another source still has pending posts.
+
+The internal order of every source remains chronological.
 
 Example:
 
@@ -152,87 +177,93 @@ Business 1
 Gaming 1
 Science 1
 Business 2
-Tech 1
 Entertainment 1
+Tech 1
 Gaming 2
 Sports 1
 ...
 ```
 
-The order **inside each individual source** stays chronological. Only the order between different sources is randomized.
+If a source has more than 100 pending messages, V1 refills its queue automatically instead of stopping after the first batch.
 
-If a source has more than 100 pending messages, another batch is fetched automatically when its current queue runs out.
+## 9. Duplicate protection
 
-If one source fails, that source is blocked for the current run while the other accessible sources continue.
+V1 uses two safeguards.
 
----
+### Source message position
 
-## Persistent final footer
+`telethon_state.json` stores the last successfully processed message ID for every source.
 
-The destination channel should always finish with the Newsroom specialty-channel footer.
+### Canonical source URL list
 
-The process is:
-
-### At the start of a run
-
-The previous footer message ID is read from `telethon_state.json` and the old footer is deleted.
-
-V1 first tries Telethon deletion, which also allows a clean upgrade from the previous footer implementation. If necessary, it falls back to the Bot API for a bot-authored footer.
-
-### During the run
-
-Source posts are forwarded normally.
-
-### At the end of the run
-
-The footer is posted again with the Telegram Bot API `sendRichMessage` method.
-
-The exact new footer message ID is saved back to `telethon_state.json`.
-
-This keeps the footer at the very bottom after every successful cycle.
-
----
-
-## Footer design in V1
-
-The footer contains:
+`posted_urls.txt` stores URLs such as:
 
 ```text
-🎯 Want to go deeper? Explore our specialty channels:
-
-💼 @BusinessNewsroom
-🎮 @GamingNewsroom
-💻 @TheTechNewsroom
-🔭 @ScienceNewsroom
-🎬 @EntertainmentNewsroom
-🎓 @CareerNewsroom
-🦸 @ComicsNewsroom
-🏆 @TheSportsNewsroom
-
-[centered Pull Quote]
-Newsroom, one network, all the news you need.
-[/centered Pull Quote]
-
-Stay informed. Stay ahead. 🚀
+https://t.me/BusinessNewsroom/123
 ```
 
-The eight usernames are clickable links.
+If the URL already exists, the post is skipped.
 
-The slogan uses Rich HTML `<aside>`, which Telegram maps to a centered Pull Quote. Standard `<blockquote>` is **not** used for this V1 footer. Telegram's current Bot API describes the Pull Quote block as a quotation with centered text. citeturn658733search0
+This protects against duplicate forwarding during reruns and interrupted GitHub Actions jobs.
 
----
+## 10. State files
 
-## Important: the forwarded news posts are unchanged
+### `telethon_state.json`
 
-The forwarder uses Telethon's normal native `forward_messages()` call for source posts.
+Stores:
 
-V1 does not rebuild the source posts into Rich Messages, does not rewrite their text, and does not add the footer formatting to them.
+```json
+{
+  "initialized": true,
+  "channels": {
+    "@BusinessNewsroom": {
+      "initialized": true,
+      "last_message_id": 513
+    }
+  },
+  "footer_message_id": 557
+}
+```
 
-Only the custom final footer uses the Bot API Rich Message system.
+The actual file may contain all eight source channels.
 
----
+`footer_message_id` is the destination message ID of the current footer.
 
-## GitHub Actions schedule
+### `posted_urls.txt`
+
+One successfully forwarded source URL per line.
+
+Both files are committed back to the repository by GitHub Actions so the next run continues from the previous state.
+
+## 11. Footer replacement behavior
+
+The project intentionally keeps only one managed footer.
+
+At the beginning of a run:
+
+```text
+stored footer ID
+      ↓
+try Telethon deletion
+      ↓
+try Bot API deletion if needed
+```
+
+At the end of a run:
+
+```text
+sendRichMessage
+      ↓
+receive destination message_id
+      ↓
+save footer_message_id
+```
+
+This means the next run knows exactly which footer to remove.
+
+If an older footer has already been deleted manually, the stored ID can be safely cleared when Telegram reports that the message no longer exists.
+
+## 12. GitHub Actions schedule
 
 Workflow file:
 
@@ -242,277 +273,193 @@ Workflow file:
 
 Schedule:
 
-```text
+```cron
 7 2-20 * * *
 ```
 
-GitHub cron uses UTC. Bangladesh is UTC+6, so this runs at approximately:
+Bangladesh time is UTC+6, so this corresponds to approximately:
 
 ```text
-08:07, 09:07, 10:07, ... 20:07, 21:07, ... 02:07 Bangladesh time
+08:07 AM through 02:07 AM Bangladesh time
 ```
 
-In other words, the workflow runs once each hour from **8:07 AM through 2:07 AM Bangladesh time**.
+Manual execution is also enabled with `workflow_dispatch`.
 
-Manual execution is also available through `workflow_dispatch`.
+The workflow uses:
 
----
-
-## State files
-
-### `telethon_state.json`
-
-Stores:
-
-- Per-source initialization state.
-- Per-source latest processed Telegram message ID.
-- Current footer message ID.
-
-It is written atomically so an interrupted write does not intentionally replace the file with a half-written JSON document.
-
-### `posted_urls.txt`
-
-Stores every successfully forwarded source post URL.
-
-### Do not delete these during normal operation
-
-Deleting the state files makes the program behave like a new deployment again. That can cause historical posts to be processed again.
-
-Only reset them deliberately when you actually want a fresh deployment/backfill.
-
----
-
-## Repository structure
-
-```text
-.
-├── .github/
-│   └── workflows/
-│       └── forward-hourly.yml
-├── forwarder.py
-├── generate_session.py
-├── requirements.txt
-├── telethon_state.json
-├── posted_urls.txt
-└── README.md
+```yaml
+permissions:
+  contents: write
 ```
 
-`telethon_state.json` and `posted_urls.txt` may not exist until the first run. The program creates them automatically.
+so it can commit the state files back to the repository.
 
----
+## 13. Workflow secrets are passed like this
 
-## Generate the Telethon session
+```yaml
+env:
+  API_ID: ${{ secrets.API_ID }}
+  API_HASH: ${{ secrets.API_HASH }}
+  TELETHON_SESSION: ${{ secrets.TELETHON_SESSION }}
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+```
 
-Run `generate_session.py` on a trusted machine or in a trusted Google Colab environment.
+Do not rename `TELEGRAM_BOT_TOKEN` in the workflow unless you also change the Python configuration.
 
-It asks for:
+## 14. How to generate `TELETHON_SESSION`
+
+Run `generate_session.py` on a trusted machine or Google Colab.
+
+It will ask for:
 
 ```text
 API ID
 API HASH
 ```
 
-Then it performs the normal Telegram login/2FA flow and prints a `TELETHON_SESSION` string.
+Then it starts the normal Telegram login process and prints the generated `StringSession`.
 
-Store that complete value as the GitHub Actions secret:
+Save the resulting session string as the GitHub secret:
 
 ```text
 TELETHON_SESSION
 ```
 
-Do not commit the session string.
+Never commit the session string to GitHub.
 
----
+## 15. Running a manual test
 
-## First deployment
+After the four secrets are configured:
 
-### Step 1: add GitHub secrets
+1. Open **GitHub → Actions**.
+2. Open **Telegram Telethon Hourly Forwarder**.
+3. Choose **Run workflow**.
+4. Watch the job log.
 
-Add:
-
-```text
-API_ID
-API_HASH
-TELETHON_SESSION
-TELEGRAM_BOT_TOKEN
-```
-
-### Step 2: check Telegram access
-
-Confirm that the Telethon user can read all eight source channels and post/forward into `@NewsroomHQ`.
-
-Confirm that the footer bot can post in `@NewsroomHQ`.
-
-### Step 3: run manually
-
-Open GitHub Actions and run:
+A healthy run should show messages similar to:
 
 ```text
-Telegram Telethon Hourly Forwarder V1
-```
-
-using **Run workflow**.
-
-### Step 4: check the logs
-
-A healthy run should contain messages similar to:
-
-```text
-AUTHENTICATED | username=@YourUser | id=... | bot=False
-BOT AUTHENTICATED | username=@YourFooterBot | id=...
+AUTHENTICATED | username=@... | id=... | bot=False
 TARGET RESOLVED | @NewsroomHQ
 SOURCE ACCESS PASS | @BusinessNewsroom accessible
 SOURCE ACCESS PASS | @GamingNewsroom accessible
 ...
-FOOTER POST PASS | method=bot_api_rich_message | message_id=...
-FINISHED | initialized=True | forwarded=... | failed=0 | footer_posted=True | posted_urls=...
+FOOTER POST PASS | method=bot_api | message_id=...
+FINISHED | ... | footer_posted=True | ...
 ```
 
-The exact counts will vary.
+The token and session value are never printed.
 
-### Step 5: verify the target channel
+## 16. What a failed run means
 
-Check that:
+### `Missing GitHub secrets: TELEGRAM_BOT_TOKEN`
 
-- Source posts arrived in mixed cross-channel order.
-- No duplicate source posts were created.
-- The final message is the specialty footer.
-- The slogan appears as a centered Pull Quote in a Telegram client that supports Rich Messages.
+The repository secret name is wrong or the workflow does not pass it.
 
-### Step 6: test a new post
-
-Publish one new post in a source channel, then manually run the workflow once more.
-
-The workflow should:
-
-1. Delete the previous footer.
-2. Forward the new source post.
-3. Recreate the footer at the bottom.
-4. Save the new footer message ID.
-
----
-
-## What happens when something fails
-
-### A source channel fails
-
-Only that source is blocked for the current run. Other accessible sources continue.
-
-### A message forward fails
-
-That source's state is not advanced past the failed message. The message can be retried later.
-
-### Footer deletion fails
-
-The run stops before forwarding if the previous footer cannot be safely removed.
-
-This protects the rule that the footer should remain the final message rather than allowing posts to accumulate below an old footer.
-
-### Footer posting fails
-
-The source processing may already have completed, but the workflow exits with a failure status because the required final footer was not recreated.
-
-The state files are still handled by the final GitHub Actions state-saving step.
-
-### Git push fails
-
-The workflow does not hide the push failure. A failed state push remains visible as a failed workflow.
-
----
-
-## Security notes
-
-Never put these values into Python source code:
+Use exactly:
 
 ```text
-API_ID
-API_HASH
+TELEGRAM_BOT_TOKEN
+```
+
+### `TELETHON_SESSION is not authorized`
+
+The session expired, is incomplete, or was generated incorrectly.
+
+Generate a new user `StringSession`.
+
+### `TELETHON_SESSION belongs to a bot account`
+
+The session belongs to a bot rather than a normal Telegram user. Generate a user session.
+
+### `SOURCE ACCESS FAIL`
+
+The Telethon user cannot access that channel, or Telegram returned an access error.
+
+The other accessible sources can still continue.
+
+### `FORWARD FAIL`
+
+Telegram rejected a forwarding request. V1 does not advance that message ID after the failure, so the message remains retryable.
+
+### `FOOTER POST BOT API ERROR`
+
+The bot token may be wrong, the bot may not be able to post in `@NewsroomHQ`, or Telegram may reject the Rich Message payload.
+
+Check the bot's permissions and the GitHub secret name first.
+
+## 17. Important implementation rules
+
+Do not change these without a specific reason:
+
+- `TELETHON_SESSION` must remain a user session.
+- `TELEGRAM_BOT_TOKEN` is used only for the footer Bot API calls.
+- Footer Rich Message uses `InputRichMessage.html`.
+- Footer does not use MarkdownV2.
+- Footer does not use `InputRichMessage.blocks`.
+- Forwarded news posts remain native Telegram forwards.
+- `posted_urls.txt` must be preserved between runs.
+- `telethon_state.json` must be preserved between runs.
+
+## 18. Files
+
+```text
+TelegramForwarder-V1/
+├── .github/
+│   └── workflows/
+│       └── forward-hourly.yml
+├── forwarder.py
+├── generate_session.py
+├── requirements.txt
+└── README.md
+```
+
+## 19. Dependency
+
+The project intentionally keeps dependencies small:
+
+```text
+Telethon>=1.40,<2
+```
+
+The Telegram Bot API calls use Python's standard library HTTP tools, so no extra `requests` package is required.
+
+## 20. Security notes
+
+Never commit any of these values into the repository:
+
+```text
+API_ID/API_HASH combination used with the account
 TELETHON_SESSION
 TELEGRAM_BOT_TOKEN
 ```
 
-Use GitHub Actions repository secrets.
+Keep them in GitHub Actions repository secrets.
 
-Do not print the values in logs.
+Do not print them in logs, issues, screenshots, or README files.
 
-A Telethon session string is a live login credential for the Telegram user account. Treat it like a password.
+## 21. V1 summary
 
-A bot token is also a credential. Treat it like a password.
-
----
-
-## Troubleshooting
-
-### `Missing GitHub secrets: ...`
-
-The workflow is not receiving one or more required secrets. Check the repository secret names and the workflow `env:` section.
-
-### `TELETHON_SESSION belongs to a bot account`
-
-The session was generated from a bot account. Generate the session again using a normal Telegram user account.
-
-### `SOURCE ACCESS FAIL`
-
-The Telethon account cannot currently access that source channel. Check membership, privacy, username, or Telegram permissions.
-
-### `Cannot authenticate Telegram bot token`
-
-`TELEGRAM_BOT_TOKEN` is missing, invalid, revoked, or blocked by an external network/API problem.
-
-### `FOOTER POST TELEGRAM BOT API ERROR`
-
-Check that the bot is present in `@NewsroomHQ` and has permission to post there. Also make sure the bot token belongs to the bot you intended to use.
-
-### The centered quote does not look centered
-
-V1 sends the footer through Telegram's current Rich Message API using `<aside>`. Rendering depends on the Telegram client version. The data sent by the program uses the official Pull Quote rich-message structure rather than a normal Markdown/HTML block quote. citeturn658733search0
-
-### Duplicates appear after a repository reset
-
-Check whether `telethon_state.json` or `posted_urls.txt` was removed or replaced. Those files are part of the deduplication state.
-
----
-
-## Operational summary
+**Telegram Forwarder V1 =**
 
 ```text
-GitHub Actions
-      │
-      ▼
-forwarder.py
-      │
-      ├── Telethon user session
-      │      ├── Read 8 source histories
-      │      ├── Backfill old posts
-      │      ├── Detect new posts
-      │      └── Native forward to @NewsroomHQ
-      │
-      ├── posted_urls.txt
-      │      └── Duplicate protection
-      │
-      ├── telethon_state.json
-      │      ├── Per-source message IDs
-      │      └── Footer message ID
-      │
-      └── Telegram Bot API
-             ├── Delete previous footer when needed
-             └── sendRichMessage
-                    └── Centered Pull Quote footer
+8 Telegram sources
+        ↓
+Telethon user history polling
+        ↓
+chronological per-source queues
+        ↓
+random cross-channel interleaving
+        ↓
+native Telegram forwarding
+        ↓
+URL + message-ID deduplication
+        ↓
+persistent GitHub state
+        ↓
+Rich Message footer via Bot API
+        ↓
+centered Pull Quote + final CTA
 ```
 
-## V1 definition
-
-This package is **Telegram Forwarder V1**.
-
-The V1 scope is intentionally narrow:
-
-- Reliable history polling with a Telegram user session.
-- Eight configured source channels.
-- Historical backfill.
-- Future-post forwarding.
-- URL + message-ID duplicate protection.
-- Randomized cross-channel interleaving.
-- Resumable processing.
-- Persistent final footer.
-- Telegram Rich Message Pull Quote for the footer.
-- GitHub Actions hourly automation.
+The design keeps forwarding reliable and native while using Telegram's newer Rich Message system only where richer footer formatting is needed.
