@@ -28,13 +28,14 @@ The final Newsroom promotion is intentionally split into two Telegram-native lay
 1. **Rich Message HTML** for the editorial/premium content.
 2. **`InlineKeyboardMarkup`** for the eight channel links below the Rich Message.
 
-The Rich Message is sent through Telegram Bot API `sendRichMessage` using **`InputRichMessage.html` only**. It does not use MarkdownV2, `InputRichMessage.blocks`, `<tg-button>`, or `<tg-button-row>`.
+The Rich Message is sent through Telegram Bot API `sendRichMessage` using **`InputRichMessage.html` only**. It does not use MarkdownV2, `InputRichMessage.blocks`, `<tg-button>`, or `<tg-button-row>`. The photo is supplied through the documented `InputRichMessage.media` mechanism and uploaded in the same `sendRichMessage` request.
 
 Current promotion content:
 
 ```text
-There's more to Newsroom.
+PHOTO (one randomly selected 1200x675 image)
 
+There's more to Newsroom.
 Pick the feed you want next and stay close to what matters.
 
 [ centered pull quote ]
@@ -45,6 +46,16 @@ One connected network, all the news you need.
 [ 🎬 Entertainment ] [ 🎓 Career ]
 [ 🦸 Comics   ] [ 🏆 Sports ]
 ```
+
+The photo, Rich Message content, and inline keyboard are sent as **one Telegram message** through `sendRichMessage`. The photo is embedded in the Rich Message using `tg://photo?id=...`, while the eight category links remain a normal `InlineKeyboardMarkup` attached through `reply_markup`.
+
+### Promotion photo rotation
+
+Place **3-5 photos** in `assets/promo/`. Recommended format is exactly **1200 × 675 px (16:9 landscape)**. Accepted formats are JPG, JPEG, PNG, and WEBP.
+
+At each workflow run, the forwarder randomly selects one available photo and avoids selecting the same filename used by the immediately previous promotion when more than one photo exists. The selected filename is stored in `telethon_state.json` as `footer_photo`.
+
+The repository intentionally does not invent or download stock photography. Add your own final promotional images to `assets/promo/`.
 
 The keyboard is deliberately a normal `InlineKeyboardMarkup` attached through the `reply_markup` parameter of `sendRichMessage`. Telegram's Bot API explicitly supports `reply_markup` on `sendRichMessage`, with an inline keyboard represented as rows of `InlineKeyboardButton` objects. citeturn3view0
 
@@ -108,7 +119,9 @@ The workflow passes it as:
 TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 ```
 
-The bot must be able to post the footer in `@NewsroomHQ` and delete its own previous footer message. Keep the token secret and never commit it.
+The bot also needs permission to send media in `@NewsroomHQ`.
+
+The bot must be able to post the footer in `@NewsroomHQ`, send photos there, and delete its own previous footer message. Keep the token secret and never commit it.
 
 ## Why both Telethon and Bot API are used
 
@@ -452,6 +465,9 @@ TelegramForwarder-V1/
 ├── forwarder.py
 ├── requirements.txt
 ├── generate_session.py
+├── assets/
+│   └── promo/
+│       └── README.txt
 ├── README.md
 └── .github/
     └── workflows/

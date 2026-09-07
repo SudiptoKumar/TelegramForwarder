@@ -10,6 +10,8 @@ import urllib.request
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import mimetypes
+
 from telethon import TelegramClient
 from telethon.errors import ChannelPrivateError, FloodWaitError, RPCError
 from telethon.sessions import StringSession
@@ -35,6 +37,8 @@ SOURCES = {
 
 STATE_FILE = Path("telethon_state.json")
 POSTED_URLS_FILE = Path("posted_urls.txt")
+PROMO_PHOTO_DIR = Path("assets/promo")
+PROMO_PHOTO_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 SESSION_NAME = "newsroom_forwarder"
 
 logging.basicConfig(
@@ -68,10 +72,12 @@ def default_state():
         "initialized": False,
         "channels": {},
         "footer_message_id": None,
+        "footer_photo": None,
     }
 
 
-SPECIALTY_FOOTER_HTML = """<h2>There's more to Newsroom.</h2>
+SPECIALTY_FOOTER_HTML = """<img src="tg://photo?id=promo_photo">
+<h2>There's more to Newsroom.</h2>
 <p>Pick the feed you want next and stay close to what matters.</p>
 <aside>One connected network, all the news you need.</aside>"""
 
@@ -99,9 +105,52 @@ SPECIALTY_FOOTER_KEYBOARD = {
 BOT_API_BASE = "https://api.telegram.org/bot"
 
 
+def promo_photos():
+    if not PROMO_PHOTO_DIR.exists():
+        return []
+    return sorted(
+        path for path in PROMO_PHOTO_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in PROMO_PHOTO_EXTENSIONS
+    )
+
+
+def choose_promo_photo(previous_name=None):
+    photos = promo_photos()
+    if not photos:
+        raise RuntimeError(
+            f"No promotion photos found in {PROMO_PHOTO_DIR}. "
+            "Add 3-5 landscape images at 1200x675 before running the workflow."
+        )
+    choices = [path for path in photos if path.name != previous_name]
+    if not choices:
+        choices = photos
+    return random.choice(choices)
+
+
+def _multipart_body(fields, files):
+    boundary = f"----TelegramForwarder{random.randrange(10**12):012d}".encode("ascii")
+    chunks = []
+    for name, value in fields.items():
+        chunks.extend([
+            b"--" + boundary + b"\r\n",
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+            str(value).encode("utf-8"),
+            b"\r\n",
+        ])
+    for name, (filename, content, content_type) in files.items():
+        chunks.extend([
+            b"--" + boundary + b"\r\n",
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8"),
+            f"Content-Type: {content_type}\r\n\r\n".encode("ascii"),
+            content,
+            b"\r\n",
+        ])
+    chunks.append(b"--" + boundary + b"--\r\n")
+    return b"".join(chunks), boundary
+
 
 def bot_api_call(method, data=None, timeout=30, retries=3):
-    """Call the Telegram Bot API without adding another Python dependency."""
+    """Call the Telegram Bot API with normal form encoding."""
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
 
@@ -114,6 +163,29 @@ def bot_api_call(method, data=None, timeout=30, retries=3):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
 
+    return _bot_api_request(request, method, retries=retries)
+
+
+def bot_api_call_multipart(method, data, files, timeout=60, retries=3):
+    """Call the Telegram Bot API using multipart/form-data for file uploads."""
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is not configured")
+
+    body, boundary = _multipart_body(data, files)
+    url = f"{BOT_API_BASE}{TELEGRAM_BOT_TOKEN}/{method}"
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary.decode('ascii')}",
+            "Content-Length": str(len(body)),
+        },
+    )
+    return _bot_api_request(request, method, timeout=timeout, retries=retries)
+
+
+def _bot_api_request(request, method, timeout=30, retries=3):
     last_error = None
     for attempt in range(1, retries + 1):
         try:
@@ -131,6 +203,7 @@ def bot_api_call(method, data=None, timeout=30, retries=3):
                 description = payload.get("description", str(exc))
             except Exception:
                 description = str(exc)
+                payload = {}
             last_error = RuntimeError(f"Bot API {method} HTTP {exc.code}: {description}")
             if exc.code < 500 and exc.code != 429:
                 raise last_error
@@ -147,7 +220,6 @@ def bot_api_call(method, data=None, timeout=30, retries=3):
                 time.sleep(attempt * 2)
             else:
                 break
-
     raise last_error or RuntimeError(f"Bot API {method} failed")
 
 
@@ -160,16 +232,30 @@ def bot_delete_footer(footer_id):
     return bool(result)
 
 
-def bot_send_footer():
-    """Send the footer through Rich Messages using InputRichMessage.html only."""
+def bot_send_footer(previous_photo=None):
+    """Send one photo + Rich Message + inline keyboard as a single Telegram message."""
+    photo_path = choose_promo_photo(previous_photo)
+    photo_bytes = photo_path.read_bytes()
+    mime_type = mimetypes.guess_type(photo_path.name)[0] or "image/jpeg"
+
     rich_message = json.dumps(
         {
             "html": SPECIALTY_FOOTER_HTML,
+            "media": [
+                {
+                    "id": "promo_photo",
+                    "media": {
+                        "type": "photo",
+                        "media": "attach://promo_photo",
+                    },
+                }
+            ],
         },
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return bot_api_call(
+
+    result = bot_api_call_multipart(
         "sendRichMessage",
         {
             "chat_id": TARGET,
@@ -180,7 +266,11 @@ def bot_send_footer():
                 separators=(",", ":"),
             ),
         },
+        {
+            "promo_photo": (photo_path.name, photo_bytes, mime_type),
+        },
     )
+    return result, photo_path.name
 
 
 def normalize_channel_state(value):
@@ -255,6 +345,8 @@ def load_state():
         normalized["footer_message_id"] = int(raw_footer_id) if raw_footer_id is not None else None
     except (TypeError, ValueError):
         normalized["footer_message_id"] = None
+    raw_footer_photo = state.get("footer_photo")
+    normalized["footer_photo"] = str(raw_footer_photo) if raw_footer_photo else None
     for username in SOURCES:
         if username in channels:
             channel_state = normalize_channel_state(channels[username])
@@ -523,13 +615,18 @@ async def delete_previous_footer(client, target, state):
 async def post_footer(state):
     """Post the specialty footer through Bot API sendRichMessage and store its ID."""
     try:
-        result = bot_send_footer()
+        result, photo_name = bot_send_footer(state.get("footer_photo"))
         footer_id = result.get("message_id") if isinstance(result, dict) else None
         if footer_id is None:
             raise RuntimeError("Telegram Bot API returned no footer message_id")
         state["footer_message_id"] = int(footer_id)
+        state["footer_photo"] = photo_name
         save_state(state)
-        log.info("FOOTER POST PASS | method=bot_api | message_id=%s", footer_id)
+        log.info(
+            "FOOTER POST PASS | method=bot_api | message_id=%s | photo=%s",
+            footer_id,
+            photo_name,
+        )
         return True
     except Exception as exc:
         log.exception("FOOTER POST BOT API ERROR | %s: %s", type(exc).__name__, exc)
