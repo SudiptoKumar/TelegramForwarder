@@ -1,4 +1,21 @@
 {
-  "initialized": false,
-  "channels": {}
+  "initialized": true,
+  "channels": {
+    "@BusinessNewsroom": {
+      "initialized": true,
+      "last_message_id": 503
+    },
+    "@GamingNewsroom": {
+      "initialized": true,
+      "last_message_id": 146
+    },
+    "@TheTechNewsroom": {
+      "initialized": true,
+      "last_message_id": 254
+    },
+    "@EntertainmentNewsroom": {
+      "initialized": true,
+      "last_message_id": 333
+    }
+  }
 }
