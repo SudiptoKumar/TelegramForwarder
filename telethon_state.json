@@ -3,15 +3,15 @@
   "channels": {
     "@BusinessNewsroom": {
       "initialized": true,
-      "last_message_id": 505
+      "last_message_id": 507
     },
     "@GamingNewsroom": {
       "initialized": true,
-      "last_message_id": 146
+      "last_message_id": 149
     },
     "@TheTechNewsroom": {
       "initialized": true,
-      "last_message_id": 254
+      "last_message_id": 260
     },
     "@EntertainmentNewsroom": {
       "initialized": true,
@@ -19,7 +19,7 @@
     },
     "@ScienceNewsroom": {
       "initialized": true,
-      "last_message_id": 196
+      "last_message_id": 202
     },
     "@CareerNewsroom": {
       "initialized": true,
