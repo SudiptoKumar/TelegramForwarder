@@ -30,12 +30,15 @@ It does **not** use MarkdownV2 and does **not** send an `InputRichMessage.blocks
 The HTML uses these Telegram Rich Message features:
 
 - `<h2>` for the main section heading.
+- `<h3>` for the “Choose your next feed.” instruction heading.
 - `<p>` for normal Rich paragraphs.
-- `<tg-button-row>` for rows of clickable URL buttons.
-- `<details>` for the optional expandable network explanation.
+- `<tg-button-row>` for four rows of clickable URL buttons.
+- Two-line button labels so the emoji sits above the category name and the button has enough vertical content for a taller mobile layout.
 - `<aside>` for the centered Pull Quote brand statement.
 
-The footer behaves like a small channel selector instead of a plain list:
+Telegram Rich Message HTML does not expose a CSS-style pixel height or padding property for `<tg-button>`. The V1 implementation therefore uses an explicit line break inside every button label (`emoji` on line 1, category on line 2) to create the intended taller two-line button presentation while keeping the existing two-column width.
+
+The footer behaves like a small feed selector rather than a plain list:
 
 ```text
 🧭 Where do you want to go?
@@ -43,22 +46,27 @@ The footer behaves like a small channel selector instead of a plain list:
 Choose your next feed.
 Tap a category and jump straight into the newsroom.
 
-YOUR INTERESTS
+PICK A FEED
 
-[💼 Business]      [💻 Technology]
-[🎮 Gaming]        [🔭 Science]
-[🎬 Entertainment] [🎓 Career]
-[🦸 Comics]        [🏆 Sports]
+[   💼   ]      [   💻   ]
+[ Business ]    [  Tech  ]
 
-▸ Explore the full Newsroom network
+[   🎮   ]      [   🔭   ]
+[ Gaming  ]     [ Science ]
+
+[   🎬   ]      [   🎓   ]
+[Entertainment]  [ Career ]
+
+[   🦸   ]      [   🏆   ]
+[ Comics  ]     [ Sports ]
 
 [ centered pull quote ]
-One network. Eight ways to stay ahead.
+One connected network, all the news you need.
 
 🚀 Start exploring.
 ```
 
-Telegram currently documents `sendRichMessage`, Rich HTML, `<tg-button-row>` as `RichBlockButtons`, `<details>` as `RichBlockDetails`, `<h2>` as `RichBlockSectionHeading`, `<p>` as `RichBlockParagraph`, and `<aside>` as `RichBlockPullQuotation`. citeturn708593search0
+Telegram documents these Rich Message features in the official Bot API documentation: https://core.telegram.org/bots/api
 
 ## Authentication
 
@@ -352,11 +360,14 @@ The bot token itself is never printed.
 After the manual run, `@NewsroomHQ` should end with one footer message containing:
 
 - A large `🧭 Where do you want to go?` heading.
+- A large `🧭 Where do you want to go?` heading.
+- `Choose your next feed.` as an `h3`.
 - A short explanatory paragraph.
-- `YOUR INTERESTS` section label.
+- `PICK A FEED` section label.
 - Four rows of two clickable category buttons.
-- An expandable `Explore the full Newsroom network` section.
-- A centered Pull Quote reading `One network. Eight ways to stay ahead.`
+- Each button uses a two-line label with emoji above category text.
+- A centered Pull Quote reading `One connected network, all the news you need.`
+- `🚀 Start exploring.` as the closing line.
 - `🚀 Start exploring.` as the closing line.
 
 The eight button destinations are:
