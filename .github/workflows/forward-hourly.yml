@@ -1,4 +1,4 @@
-name: Telegram Telethon Hourly Forwarder V1
+name: Telegram Telethon Hourly Forwarder
 
 on:
   # Bangladesh time (UTC+6): 8:00 AM through 2:00 AM next day.
