@@ -3,7 +3,7 @@
   "channels": {
     "@BusinessNewsroom": {
       "initialized": true,
-      "last_message_id": 564
+      "last_message_id": 568
     },
     "@GamingNewsroom": {
       "initialized": true,
@@ -34,6 +34,6 @@
       "last_message_id": 2
     }
   },
-  "footer_message_id": 980,
-  "footer_photo": "promo-01.png"
+  "footer_message_id": 985,
+  "footer_photo": "promo-02.png"
 }
