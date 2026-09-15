@@ -13,7 +13,6 @@ Sources:
 - `@TheTechNewsroom`
 - `@EntertainmentNewsroom`
 - `@ScienceNewsroom`
-- `@CareerNewsroom`
 - `@ComicsNewsroom`
 - `@TheSportsNewsroom`
 
@@ -392,7 +391,6 @@ Tech           → https://t.me/TheTechNewsroom
 Gaming         → https://t.me/GamingNewsroom
 Science        → https://t.me/ScienceNewsroom
 Entertainment  → https://t.me/EntertainmentNewsroom
-Career         → https://t.me/CareerNewsroom
 Comics         → https://t.me/ComicsNewsroom
 Sports         → https://t.me/TheSportsNewsroom
 ```

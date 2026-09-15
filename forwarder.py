@@ -30,7 +30,6 @@ SOURCES = {
     "@TheTechNewsroom": "TheTechNewsroom",
     "@EntertainmentNewsroom": "EntertainmentNewsroom",
     "@ScienceNewsroom": "ScienceNewsroom",
-    "@CareerNewsroom": "CareerNewsroom",
     "@ComicsNewsroom": "ComicsNewsroom",
     "@TheSportsNewsroom": "TheSportsNewsroom",
 }
