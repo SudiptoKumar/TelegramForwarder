@@ -1,5 +1,5 @@
 {
-  "initialized": true,
+  "initialized": false,
   "channels": {
     "@BusinessNewsroom": {
       "initialized": true,
@@ -21,23 +21,15 @@
       "initialized": true,
       "last_message_id": 495
     },
-    "@ComicsNewsroom": {
-      "initialized": true,
-      "last_message_id": 64
-    },
     "@TheSportsNewsroom": {
       "initialized": true,
       "last_message_id": 81
     },
-    "@HistoryNewsroom": {
+    "Comics News": {
       "initialized": true,
-      "last_message_id": 62
-    },
-    "@FactsNewsroom": {
-      "initialized": true,
-      "last_message_id": 26
+      "last_message_id": 0
     }
   },
-  "footer_message_id": 2189,
-  "footer_photo": "promo-05.png"
+  "footer_message_id": 2146,
+  "footer_photo": "promo-04.png"
 }

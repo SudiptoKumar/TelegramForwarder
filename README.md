@@ -13,7 +13,7 @@ Sources:
 - `@TheTechNewsroom`
 - `@EntertainmentNewsroom`
 - `@ScienceNewsroom`
-- `@ComicsNewsroom`
+- `Comics News` (private channel, ID `-1004465768984`)
 - `@TheSportsNewsroom`
 - `@HistoryNewsroom` (History in Today)
 - `@FactsNewsroom` (Daily Facts)
@@ -24,10 +24,10 @@ Target:
 
 ## V1 footer: Rich Message + Inline Keyboard
 
-The final Newsroom promotion is intentionally split into two Telegram-native layers:
+The Newsroom promotion is intentionally split into two Telegram-native layers:
 
 1. **Rich Message HTML** for the editorial/premium content.
-2. **`InlineKeyboardMarkup`** for the ten channel links below the Rich Message.
+2. **`InlineKeyboardMarkup`** for the ten channel links below the Rich Message. The Comics button opens a message inside the private Comics News channel and therefore requires Telegram access to that channel.
 
 The Rich Message is sent through Telegram Bot API `sendRichMessage` using **`InputRichMessage.html` only**. It does not use MarkdownV2, `InputRichMessage.blocks`, `<tg-button>`, or `<tg-button-row>`. The photo is supplied through the documented `InputRichMessage.media` mechanism and uploaded in the same `sendRichMessage` request.
 
@@ -368,6 +368,7 @@ A healthy run should show messages similar to:
 AUTHENTICATED | username=@YourUser | id=... | bot=False
 TARGET RESOLVED | @NewsroomHQ
 SOURCE ACCESS PASS | @BusinessNewsroom accessible
+SOURCE ACCESS PASS | Comics News accessible | mode=private | id=-1004465768984
 ...
 FORWARD PASS | source=@BusinessNewsroom | source_message_id=...
 ...
@@ -403,7 +404,7 @@ Tech           → https://t.me/TheTechNewsroom
 Gaming         → https://t.me/GamingNewsroom
 Science        → https://t.me/ScienceNewsroom
 Entertainment  → https://t.me/EntertainmentNewsroom
-Comics         → https://t.me/ComicsNewsroom
+Comics         → https://t.me/c/4465768984/72  (private)
 Sports         → https://t.me/TheSportsNewsroom
 History        → https://t.me/HistoryNewsroom
 Facts          → https://t.me/FactsNewsroom

@@ -12,7 +12,7 @@ from tempfile import NamedTemporaryFile
 
 import mimetypes
 
-from telethon import TelegramClient
+from telethon import TelegramClient, utils
 from telethon.errors import ChannelPrivateError, FloodWaitError, RPCError
 from telethon.sessions import StringSession
 from telethon.tl.patched import MessageService
@@ -30,10 +30,16 @@ SOURCES = {
     "@TheTechNewsroom": "TheTechNewsroom",
     "@EntertainmentNewsroom": "EntertainmentNewsroom",
     "@ScienceNewsroom": "ScienceNewsroom",
-    "@ComicsNewsroom": "ComicsNewsroom",
+    "Comics News": "Comics News",
     "@TheSportsNewsroom": "TheSportsNewsroom",
     "@HistoryNewsroom": "HistoryNewsroom",
     "@FactsNewsroom": "FactsNewsroom",
+}
+
+# Private source channels have no public username, so resolve them by their
+# stable Telegram peer ID. The account in TELETHON_SESSION must be a member.
+PRIVATE_SOURCE_IDS = {
+    "Comics News": -1004465768984,
 }
 
 STATE_FILE = Path("telethon_state.json")
@@ -97,7 +103,7 @@ SPECIALTY_FOOTER_KEYBOARD = {
             {"text": "🎓 Career", "url": "https://t.me/CareerNewsroom"},
         ],
         [
-            {"text": "🦸 Comics", "url": "https://t.me/ComicsNewsroom"},
+            {"text": "🦸 Comics", "url": "https://t.me/c/4465768984/72"},
             {"text": "🏆 Sports", "url": "https://t.me/TheSportsNewsroom"},
         ],
         [
@@ -316,8 +322,15 @@ def save_posted_url(url):
         fh.write(url + "\n")
 
 
-def message_url(source_username, message_id):
-    return f"https://t.me/{source_username.lstrip('@')}/{int(message_id)}"
+def message_url(source_key, message_id):
+    """Return a stable source message URL for public or private channels."""
+    private_id = PRIVATE_SOURCE_IDS.get(source_key)
+    if private_id is not None:
+        internal_id = str(private_id)
+        if internal_id.startswith("-100"):
+            internal_id = internal_id[4:]
+        return f"https://t.me/c/{internal_id}/{int(message_id)}"
+    return f"https://t.me/{source_key.lstrip('@')}/{int(message_id)}"
 
 
 def is_forwardable_message(message):
@@ -344,7 +357,7 @@ def load_state():
         channels = {}
 
     normalized = default_state()
-    normalized["channels"] = channels
+    normalized["channels"] = {}
     raw_footer_id = state.get("footer_message_id")
     try:
         normalized["footer_message_id"] = int(raw_footer_id) if raw_footer_id is not None else None
@@ -439,37 +452,65 @@ async def initialize_channel(client, state, username, entity):
     return False
 
 
+async def resolve_source_entity(client, source_key):
+    """Resolve one public username or one joined private channel by peer ID."""
+    private_id = PRIVATE_SOURCE_IDS.get(source_key)
+    if private_id is None:
+        return await client.get_entity(source_key)
+
+    # A joined private channel may not have a public username. Searching the
+    # current dialog cache is more reliable than assuming Telegram can resolve
+    # a raw numeric ID when an access hash is required.
+    async for dialog in client.iter_dialogs():
+        entity = dialog.entity
+        try:
+            if utils.get_peer_id(entity) == private_id:
+                return entity
+        except (TypeError, ValueError):
+            continue
+
+    # Fallback for clients that already have the entity cached by its peer ID.
+    return await client.get_entity(private_id)
+
+
 async def resolve_sources(client):
     """Resolve all sources independently and return only successful entities."""
     resolved = {}
-    for username in SOURCES:
+    for source_key in SOURCES:
         try:
-            entity = await client.get_entity(username)
-            resolved[username] = entity
-            log.info("SOURCE ACCESS PASS | %s accessible", username)
+            entity = await resolve_source_entity(client, source_key)
+            resolved[source_key] = entity
+            if source_key in PRIVATE_SOURCE_IDS:
+                log.info(
+                    "SOURCE ACCESS PASS | %s accessible | mode=private | id=%s",
+                    source_key,
+                    PRIVATE_SOURCE_IDS[source_key],
+                )
+            else:
+                log.info("SOURCE ACCESS PASS | %s accessible", source_key)
         except ChannelPrivateError as exc:
             log.error(
                 "SOURCE ACCESS FAIL | source=%s | ChannelPrivateError: %s",
-                username,
+                source_key,
                 exc,
             )
         except FloodWaitError as exc:
             log.error(
                 "SOURCE ACCESS FLOOD WAIT | source=%s | seconds=%s",
-                username,
+                source_key,
                 exc.seconds,
             )
         except RPCError as exc:
             log.error(
                 "SOURCE ACCESS TELEGRAM ERROR | source=%s | %s: %s",
-                username,
+                source_key,
                 type(exc).__name__,
                 exc,
             )
         except Exception as exc:
             log.exception(
                 "SOURCE ACCESS UNEXPECTED ERROR | source=%s | %s",
-                username,
+                source_key,
                 type(exc).__name__,
             )
     return resolved
