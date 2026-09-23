@@ -28,8 +28,16 @@
     "@TheSportsNewsroom": {
       "initialized": true,
       "last_message_id": 81
+    },
+    "@HistoryNewsroom": {
+      "initialized": true,
+      "last_message_id": 62
+    },
+    "@FactsNewsroom": {
+      "initialized": true,
+      "last_message_id": 26
     }
   },
-  "footer_message_id": 2146,
-  "footer_photo": "promo-04.png"
+  "footer_message_id": 2189,
+  "footer_photo": "promo-05.png"
 }
