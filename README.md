@@ -4,7 +4,7 @@ A GitHub Actions + Telethon forwarder for the Newsroom Telegram network.
 
 ## What this project does
 
-The workflow checks eight specialty Newsroom channels, forwards new posts to `@NewsroomHQ`, prevents duplicates, keeps the order inside each source chronological, mixes sources randomly, and keeps one interactive Newsroom footer as the final message in the target channel.
+The workflow checks nine specialty Newsroom channels, forwards new posts to `@NewsroomHQ`, prevents duplicates, keeps the order inside each source chronological, mixes sources randomly, and keeps one interactive Newsroom promotion in second-last position so the final message of a successful run is a forwarded source post.
 
 Sources:
 
@@ -15,6 +15,8 @@ Sources:
 - `@ScienceNewsroom`
 - `@ComicsNewsroom`
 - `@TheSportsNewsroom`
+- `@HistoryNewsroom` (History in Today)
+- `@FactsNewsroom` (Daily Facts)
 
 Target:
 
@@ -25,7 +27,7 @@ Target:
 The final Newsroom promotion is intentionally split into two Telegram-native layers:
 
 1. **Rich Message HTML** for the editorial/premium content.
-2. **`InlineKeyboardMarkup`** for the eight channel links below the Rich Message.
+2. **`InlineKeyboardMarkup`** for the ten channel links below the Rich Message.
 
 The Rich Message is sent through Telegram Bot API `sendRichMessage` using **`InputRichMessage.html` only**. It does not use MarkdownV2, `InputRichMessage.blocks`, `<tg-button>`, or `<tg-button-row>`. The photo is supplied through the documented `InputRichMessage.media` mechanism and uploaded in the same `sendRichMessage` request.
 
@@ -44,9 +46,10 @@ One connected network, all the news you need.
 [ 🎮 Gaming   ] [ 🔭 Science ]
 [ 🎬 Entertainment ] [ 🎓 Career ]
 [ 🦸 Comics   ] [ 🏆 Sports ]
+[ 📜 History  ] [ 💡 Facts ]
 ```
 
-The photo, Rich Message content, and inline keyboard are sent as **one Telegram message** through `sendRichMessage`. The photo is embedded in the Rich Message using `tg://photo?id=...`, while the eight category links remain a normal `InlineKeyboardMarkup` attached through `reply_markup`.
+The photo, Rich Message content, and inline keyboard are sent as **one Telegram message** through `sendRichMessage`. The photo is embedded in the Rich Message using `tg://photo?id=...`, while the ten category links remain a normal `InlineKeyboardMarkup` attached through `reply_markup`.
 
 ### Promotion photo rotation
 
@@ -60,9 +63,10 @@ The keyboard is deliberately a normal `InlineKeyboardMarkup` attached through th
 
 ### Mobile layout decisions
 
-- Exactly **2 buttons per row** and **4 rows**.
-- All eight buttons use the same plain URL-button structure and visual treatment.
+- Exactly **2 buttons per row** and **5 rows**.
+- All ten buttons use the same plain URL-button structure and visual treatment.
 - Emoji stays at the beginning of every label for fast scanning.
+- `History` uses `📜` and `Facts` uses `💡` to match the visual language of the other feeds.
 - `Entertainment` uses the full label `🎬 Entertainment`. Telegram clients decide whether that label fits on one line; the code does not use unsupported width, height, padding, or CSS tricks.
 - No artificial blank lines or padding characters are inserted into button labels.
 - No separate category heading, redundant instruction, or generic “Explore our specialty channels” copy is included.
@@ -71,11 +75,17 @@ Telegram documents `InlineKeyboardMarkup` as an array of button rows, and `sendR
 
 ## Promotion lifecycle
 
-The promotion remains the final message in `@NewsroomHQ`.
+The promotion is designed to be the **second-last message** of a successful run. The final message is the last forwarded source post processed in that run.
 
-At the beginning of a run, the previous saved footer message is deleted. At the end of the run, the new Rich Message is sent with the inline keyboard attached, and its destination `message_id` is stored for the next run.
+At the beginning of a run, the previous saved footer message is deleted. During processing, the newest publishable candidate is held back by one position. When all sources are exhausted, the new Rich Message is sent first, then that held source post is forwarded. This produces:
 
-This keeps the channel from accumulating multiple copies of the promotion.
+```text
+... forwarded source post
+PROMOTIONAL MESSAGE
+FINAL FORWARDED SOURCE POST
+```
+
+The promotion message ID is stored for deletion on the next run, so the target channel does not accumulate old copies.
 
 ## Authentication
 
@@ -140,7 +150,7 @@ A source can have more than 100 pending messages. The forwarder refills its queu
 
 ## Cross-channel randomized order
 
-Messages remain chronological inside each source, but the eight sources are interleaved randomly.
+Messages remain chronological inside each source, but the nine sources are interleaved randomly.
 
 The previous source is excluded from the next choice whenever another source has pending messages. This reduces long consecutive runs from the same channel.
 
@@ -199,7 +209,7 @@ They are skipped safely and the source state advances past the service-message I
 
 ## Footer lifecycle
 
-The footer is designed to remain the final message in `@NewsroomHQ`.
+The footer is designed to remain the second-last message in a successful run of `@NewsroomHQ`.
 
 At the beginning of a run:
 
@@ -213,6 +223,7 @@ At the end of a run:
 2. Send it with Bot API `sendRichMessage`.
 3. Read the returned destination `message_id`.
 4. Save that ID to `telethon_state.json`.
+5. Forward the one held final source post immediately after the promotion.
 
 The next run repeats the cycle.
 
@@ -229,8 +240,8 @@ Workflow file:
 Schedule:
 
 ```text
-07 minutes past every hour
-08:07 AM through 02:07 AM Bangladesh time
+30 minutes past each scheduled hour
+08:30 AM through 01:30 AM Bangladesh time
 ```
 
 The cron expression is:
@@ -260,7 +271,7 @@ Do not use a secret named `BOT_TOKEN` for this V1 workflow unless the workflow i
 
 The Telegram user account stored in `TELETHON_SESSION` should have:
 
-- Access to all eight source channels.
+- Access to all nine source channels.
 - Permission to read their history.
 - Permission to post/forward into `@NewsroomHQ`.
 - Permission to delete the previous footer in `@NewsroomHQ`.
@@ -373,17 +384,18 @@ After a manual run, `@NewsroomHQ` should end with one promotion message containi
 - A strong `There's more to Newsroom.` heading.
 - One short personalization/CTA sentence.
 - A centered Pull Quote: `One connected network, all the news you need.`
-- Four rows of two inline URL buttons.
-- Exactly these eight labels:
+- Five rows of two inline URL buttons.
+- Exactly these ten labels:
 
 ```text
 💼 Business       💻 Tech
 🎮 Gaming         🔭 Science
 🎬 Entertainment  🎓 Career
 🦸 Comics         🏆 Sports
+📜 History        💡 Facts
 ```
 
-The eight button destinations are:
+The ten button destinations are:
 
 ```text
 Business       → https://t.me/BusinessNewsroom
@@ -393,6 +405,8 @@ Science        → https://t.me/ScienceNewsroom
 Entertainment  → https://t.me/EntertainmentNewsroom
 Comics         → https://t.me/ComicsNewsroom
 Sports         → https://t.me/TheSportsNewsroom
+History        → https://t.me/HistoryNewsroom
+Facts          → https://t.me/FactsNewsroom
 ```
 
 The exact button height, width, and line wrapping remain Telegram-client controlled. The implementation does not attempt to override them.
@@ -475,7 +489,7 @@ TelegramForwarder-V1/
 ## V1 design summary
 
 ```text
-             Telegram source channels (8)
+             Telegram source channels (9)
                          │
                          ▼
                 Telethon user session
@@ -487,7 +501,8 @@ TelegramForwarder-V1/
                          │
                          ├── forwarded source posts
                          │
-                         └── final promotion
+                         ├── promotion (second-last)
+                         └── final forwarded source post
                                   │
                                   ▼
                          Telegram Bot API
@@ -497,7 +512,7 @@ TelegramForwarder-V1/
                     ▼                           ▼
           InputRichMessage.html        InlineKeyboardMarkup
                     │                           │
-              Heading + CTA               4 × 2 grid
+              Heading + CTA               5 × 2 grid
                     │                           │
-                Pull Quote                8 channel links
+                Pull Quote                10 channel links
 ```

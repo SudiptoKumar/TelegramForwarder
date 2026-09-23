@@ -32,6 +32,8 @@ SOURCES = {
     "@ScienceNewsroom": "ScienceNewsroom",
     "@ComicsNewsroom": "ComicsNewsroom",
     "@TheSportsNewsroom": "TheSportsNewsroom",
+    "@HistoryNewsroom": "HistoryNewsroom",
+    "@FactsNewsroom": "FactsNewsroom",
 }
 
 STATE_FILE = Path("telethon_state.json")
@@ -97,6 +99,10 @@ SPECIALTY_FOOTER_KEYBOARD = {
         [
             {"text": "🦸 Comics", "url": "https://t.me/ComicsNewsroom"},
             {"text": "🏆 Sports", "url": "https://t.me/TheSportsNewsroom"},
+        ],
+        [
+            {"text": "📜 History", "url": "https://t.me/HistoryNewsroom"},
+            {"text": "💡 Facts", "url": "https://t.me/FactsNewsroom"},
         ],
     ]
 }
@@ -632,8 +638,12 @@ async def post_footer(state):
         return False
 
 
-async def collect_source_messages(client, state, source_username, source_entity):
+async def collect_source_messages(client, state, source_username, source_entity, after_id=None):
     """Collect the oldest next batch of pending messages for one source.
+
+    ``after_id`` is used when the newest queued message is being held as the
+    final post candidate. It lets us look past that held message without
+    advancing persisted state before the message is actually forwarded.
 
     reverse=True is intentional: it makes Telethon return the oldest messages
     after the saved ID first, so a large historical backlog cannot be skipped.
@@ -656,7 +666,10 @@ async def collect_source_messages(client, state, source_username, source_entity)
         )
 
     try:
-        last_id = int(channel_state.get("last_message_id", 0))
+        if after_id is None:
+            last_id = int(channel_state.get("last_message_id", 0))
+        else:
+            last_id = int(after_id)
         if last_id < 0:
             raise ValueError("last_message_id is negative")
 
@@ -828,8 +841,8 @@ async def process():
         total_failed = 0
         posted_urls = load_posted_urls()
 
-        # Remove the previous footer before forwarding so the newly posted footer can
-        # always be the final message in @NewsroomHQ.
+        # Remove the previous footer before forwarding so the newly posted promotion
+        # can be recreated cleanly in second-last position in @NewsroomHQ.
         footer_deleted = await delete_previous_footer(client, target, state)
         if not footer_deleted:
             fail("Could not remove the previous footer safely; aborting before forwarding.")
@@ -863,6 +876,31 @@ async def process():
                 exhausted_sources.add(source_username)
 
         last_source = None
+        pending_final = None
+
+        async def refill_source(source_username, after_id=None):
+            """Refill one exhausted source queue without losing chronological order."""
+            if source_username in blocked_sources or source_username in exhausted_sources:
+                return
+
+            source_entity = sources[source_username]
+            messages, refill_failed = await collect_source_messages(
+                client,
+                state,
+                source_username,
+                source_entity,
+                after_id=after_id,
+            )
+            if refill_failed:
+                blocked_sources.add(source_username)
+                nonlocal total_failed
+                total_failed += refill_failed
+                return
+
+            source_queues[source_username].extend(messages)
+            if not messages:
+                exhausted_sources.add(source_username)
+
         while True:
             active_sources = [
                 source for source, queue in source_queues.items()
@@ -870,9 +908,9 @@ async def process():
             ]
 
             if not active_sources:
-                # Refill sources whose current batch is exhausted. This allows the
-                # first run to backfill more than 100 posts per channel without ever
-                # reverting to one-channel-at-a-time ordering.
+                # All currently queued messages are consumed. If no source can
+                # produce more work, the held final candidate really is the last
+                # forwarded post of this run.
                 refill_candidates = [
                     source for source in SOURCES
                     if source in source_queues
@@ -884,26 +922,67 @@ async def process():
                     break
 
                 for source_username in refill_candidates:
-                    source_entity = sources[source_username]
-                    messages, failed = await collect_source_messages(
-                        client,
-                        state,
-                        source_username,
-                        source_entity,
-                    )
-                    if failed:
-                        blocked_sources.add(source_username)
-                        total_failed += failed
-                        continue
-                    source_queues[source_username] = list(messages)
-                    if not messages:
-                        exhausted_sources.add(source_username)
-
+                    await refill_source(source_username)
                 continue
 
             source_username = choose_next_source(active_sources, last_source)
             source_entity = sources[source_username]
             message = source_queues[source_username].pop(0)
+            url = message_url(source_username, message.id)
+
+            # Hold the newest publishable candidate one message behind. Every
+            # earlier publishable post is forwarded immediately; when the run is
+            # exhausted, the promotion is sent first and this held message is
+            # forwarded after it, making the promotion second-last.
+            is_candidate = (
+                is_forwardable_message(message)
+                and url not in posted_urls
+            )
+
+            if is_candidate:
+                previous_pending = pending_final
+                pending_final = (
+                    source_username,
+                    source_entity,
+                    message,
+                )
+
+                if previous_pending is not None:
+                    (
+                        pending_source,
+                        pending_entity,
+                        pending_message,
+                    ) = previous_pending
+                    ok, forwarded, failed = await process_one_message(
+                        client,
+                        state,
+                        target,
+                        pending_source,
+                        pending_entity,
+                        pending_message,
+                        posted_urls,
+                    )
+                    total_forwarded += forwarded
+                    total_failed += failed
+                    if not ok:
+                        blocked_sources.add(pending_source)
+                        log.error(
+                            "SOURCE BLOCKED FOR RUN | source=%s | remaining_messages=%s",
+                            pending_source,
+                            len(source_queues[pending_source]),
+                        )
+
+                last_source = source_username
+
+                # The held message has not advanced source state yet. If this queue
+                # is empty, refill strictly after the held message ID so it cannot
+                # be re-enqueued before the held message is finally forwarded.
+                if not source_queues[source_username] and source_username not in blocked_sources:
+                    await refill_source(
+                        source_username,
+                        after_id=int(message.id),
+                    )
+                continue
 
             ok, forwarded, failed = await process_one_message(
                 client,
@@ -928,21 +1007,7 @@ async def process():
                 continue
 
             if not source_queues[source_username]:
-                # The queue may have been exhausted. We intentionally fetch the next
-                # oldest batch before declaring the source finished.
-                messages, refill_failed = await collect_source_messages(
-                    client,
-                    state,
-                    source_username,
-                    source_entity,
-                )
-                if refill_failed:
-                    blocked_sources.add(source_username)
-                    total_failed += refill_failed
-                else:
-                    source_queues[source_username].extend(messages)
-                    if not messages:
-                        exhausted_sources.add(source_username)
+                await refill_source(source_username)
 
         state["initialized"] = all(
             state["channels"].get(username, {}).get("initialized") is True
@@ -950,11 +1015,37 @@ async def process():
         )
         save_state(state)
 
-        # Always recreate the footer at the end of the cycle, even when one or more
-        # source channels failed. This preserves the user's requested final-message behavior.
+        # The promotion is intentionally posted before the held final news post.
+        # Therefore a successful run ends as: ... previous news -> promotion -> last news.
         footer_posted = await post_footer(state)
         if not footer_posted:
             total_failed += 1
+
+        if pending_final is not None:
+            (
+                pending_source,
+                pending_entity,
+                pending_message,
+            ) = pending_final
+            ok, forwarded, failed = await process_one_message(
+                client,
+                state,
+                target,
+                pending_source,
+                pending_entity,
+                pending_message,
+                posted_urls,
+            )
+            total_forwarded += forwarded
+            total_failed += failed
+            if not ok:
+                blocked_sources.add(pending_source)
+                log.error(
+                    "FINAL FORWARD FAIL | source=%s | message_id=%s | promotion_remains_last_for_retry=%s",
+                    pending_source,
+                    pending_message.id,
+                    footer_posted,
+                )
 
         log.info(
             "FINISHED | initialized=%s | forwarded=%s | failed=%s | footer_posted=%s | posted_urls=%s",
