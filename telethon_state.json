@@ -27,7 +27,7 @@
     },
     "@TheSportsNewsroom": {
       "initialized": true,
-      "last_message_id": 181
+      "last_message_id": 183
     },
     "@HistoryNewsroom": {
       "initialized": true,
@@ -38,6 +38,6 @@
       "last_message_id": 113
     }
   },
-  "footer_message_id": 2901,
-  "footer_photo": "promo-02.png"
+  "footer_message_id": 2904,
+  "footer_photo": "promo-03.png"
 }
