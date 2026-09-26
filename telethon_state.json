@@ -35,9 +35,9 @@
     },
     "@FactsNewsroom": {
       "initialized": true,
-      "last_message_id": 112
+      "last_message_id": 113
     }
   },
-  "footer_message_id": 2899,
-  "footer_photo": "promo-03.png"
+  "footer_message_id": 2901,
+  "footer_photo": "promo-02.png"
 }
