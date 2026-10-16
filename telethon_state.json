@@ -31,13 +31,13 @@
     },
     "@HistoryNewsroom": {
       "initialized": true,
-      "last_message_id": 487
+      "last_message_id": 497
     },
     "@FactsNewsroom": {
       "initialized": true,
-      "last_message_id": 486
+      "last_message_id": 496
     }
   },
-  "footer_message_id": 5681,
-  "footer_photo": "promo-02.png"
+  "footer_message_id": 5702,
+  "footer_photo": "promo-03.png"
 }
