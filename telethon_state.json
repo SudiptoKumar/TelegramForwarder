@@ -11,7 +11,7 @@
     },
     "@TheTechNewsroom": {
       "initialized": true,
-      "last_message_id": 924
+      "last_message_id": 927
     },
     "@EntertainmentNewsroom": {
       "initialized": true,
@@ -19,7 +19,7 @@
     },
     "@ScienceNewsroom": {
       "initialized": true,
-      "last_message_id": 812
+      "last_message_id": 814
     },
     "Comics News": {
       "initialized": true,
@@ -38,6 +38,6 @@
       "last_message_id": 486
     }
   },
-  "footer_message_id": 5675,
-  "footer_photo": "promo-05.png"
+  "footer_message_id": 5681,
+  "footer_photo": "promo-02.png"
 }
