@@ -3,19 +3,19 @@
   "channels": {
     "@BusinessNewsroom": {
       "initialized": true,
-      "last_message_id": 1250
+      "last_message_id": 1256
     },
     "@GamingNewsroom": {
       "initialized": true,
-      "last_message_id": 821
+      "last_message_id": 826
     },
     "@TheTechNewsroom": {
       "initialized": true,
-      "last_message_id": 1020
+      "last_message_id": 1025
     },
     "@EntertainmentNewsroom": {
       "initialized": true,
-      "last_message_id": 1042
+      "last_message_id": 1050
     },
     "@ScienceNewsroom": {
       "initialized": true,
@@ -38,6 +38,6 @@
       "last_message_id": 606
     }
   },
-  "footer_message_id": 6505,
-  "footer_photo": "promo-03.png"
+  "footer_message_id": 6530,
+  "footer_photo": "promo-01.png"
 }
