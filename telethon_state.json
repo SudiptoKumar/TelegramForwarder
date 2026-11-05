@@ -19,11 +19,11 @@
     },
     "@ScienceNewsroom": {
       "initialized": true,
-      "last_message_id": 1024
+      "last_message_id": 1030
     },
     "Comics News": {
       "initialized": true,
-      "last_message_id": 746
+      "last_message_id": 751
     },
     "@TheSportsNewsroom": {
       "initialized": true,
@@ -38,6 +38,6 @@
       "last_message_id": 860
     }
   },
-  "footer_message_id": 8235,
-  "footer_photo": "promo-01.png"
+  "footer_message_id": 8247,
+  "footer_photo": "promo-02.png"
 }
