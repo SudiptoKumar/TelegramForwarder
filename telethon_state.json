@@ -3,7 +3,7 @@
   "channels": {
     "@BusinessNewsroom": {
       "initialized": true,
-      "last_message_id": 1526
+      "last_message_id": 1532
     },
     "@GamingNewsroom": {
       "initialized": true,
@@ -23,7 +23,7 @@
     },
     "Comics News": {
       "initialized": true,
-      "last_message_id": 825
+      "last_message_id": 832
     },
     "@TheSportsNewsroom": {
       "initialized": true,
@@ -38,6 +38,6 @@
       "last_message_id": 860
     }
   },
-  "footer_message_id": 8639,
-  "footer_photo": "promo-04.png"
+  "footer_message_id": 8653,
+  "footer_photo": "promo-02.png"
 }
