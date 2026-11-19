@@ -23,11 +23,11 @@
     },
     "Comics News": {
       "initialized": true,
-      "last_message_id": 951
+      "last_message_id": 958
     },
     "@TheSportsNewsroom": {
       "initialized": true,
-      "last_message_id": 621
+      "last_message_id": 623
     },
     "@HistoryNewsroom": {
       "initialized": true,
@@ -38,6 +38,6 @@
       "last_message_id": 1008
     }
   },
-  "footer_message_id": 9632,
-  "footer_photo": "promo-02.png"
+  "footer_message_id": 9642,
+  "footer_photo": "promo-03.png"
 }
