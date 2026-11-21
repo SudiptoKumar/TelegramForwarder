@@ -19,25 +19,25 @@
     },
     "@ScienceNewsroom": {
       "initialized": true,
-      "last_message_id": 1205
+      "last_message_id": 1207
     },
     "Comics News": {
       "initialized": true,
-      "last_message_id": 975
+      "last_message_id": 983
     },
     "@TheSportsNewsroom": {
       "initialized": true,
-      "last_message_id": 629
+      "last_message_id": 632
     },
     "@HistoryNewsroom": {
       "initialized": true,
-      "last_message_id": 1162
+      "last_message_id": 1172
     },
     "@FactsNewsroom": {
       "initialized": true,
-      "last_message_id": 1038
+      "last_message_id": 1048
     }
   },
-  "footer_message_id": 9819,
-  "footer_photo": "promo-04.png"
+  "footer_message_id": 9853,
+  "footer_photo": "promo-05.png"
 }
